@@ -12,6 +12,17 @@ enum Role {
   ADMIN
 }
 
+enum RoomStatus {
+  ACTIVE
+  CLOSED
+}
+
+enum RoomMemberRole {
+  OWNER
+  PARTICIPANT
+  VIEWER
+}
+
 model User {
   id            String         @id @default(uuid())
   email         String         @unique
@@ -22,8 +33,10 @@ model User {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
-  sessions      Session[]
-  refreshTokens RefreshToken[]
+  sessions         Session[]
+  refreshTokens    RefreshToken[]
+  ownedRooms       Room[]         @relation("OwnedRooms")
+  roomMemberships  RoomMember[]   @relation("RoomMemberships")
 
   @@map("users")
 }
@@ -54,4 +67,36 @@ model RefreshToken {
   @@index([userId])
   @@index([familyId])
   @@map("refresh_tokens")
+}
+
+model Room {
+  id        String     @id @default(uuid())
+  name      String
+  ownerId   String
+  owner     User       @relation("OwnedRooms", fields: [ownerId], references: [id], onDelete: Cascade)
+  language  String
+  status    RoomStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  members   RoomMember[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@map("rooms")
+}
+
+model RoomMember {
+  id       String         @id @default(uuid())
+  roomId   String
+  room     Room           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId   String
+  user     User           @relation("RoomMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  role     RoomMemberRole @default(PARTICIPANT)
+  joinedAt DateTime       @default(now())
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+  @@index([userId])
+  @@map("room_members")
 }

@@ -1,8 +1,10 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/auth-context';
+import { RoomDto } from '@codesync/shared';
 import {
   Code2,
   LogOut,
@@ -12,27 +14,53 @@ import {
   Clock,
   CheckCircle2,
   Plus,
-  LogIn,
   LayoutDashboard,
   FolderGit2,
   Terminal,
   Loader2,
   ArrowUpRight,
-  Lock,
+  FolderPlus,
 } from 'lucide-react';
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, isLoading, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'rooms'>('dashboard');
+  const { user, isLoading: isAuthLoading, logout } = useAuth();
+  const [rooms, setRooms] = useState<RoomDto[]>([]);
+  const [isRoomsLoading, setIsRoomsLoading] = useState<boolean>(true);
+
+  const fetchRooms = useCallback(async () => {
+    try {
+      setIsRoomsLoading(true);
+      const res = await fetch(`${API_BASE_URL}/rooms`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+
+      if (res.ok) {
+        const result = await res.json();
+        if (result.success && Array.isArray(result.data)) {
+          setRooms(result.data.slice(0, 5)); // Recent 5 rooms
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch user rooms:', err);
+    } finally {
+      setIsRoomsLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!isLoading && !user) {
+    if (!isAuthLoading && !user) {
       router.push('/login');
+    } else if (user) {
+      fetchRooms();
     }
-  }, [user, isLoading, router]);
+  }, [user, isAuthLoading, router, fetchRooms]);
 
-  if (isLoading || !user) {
+  if (isAuthLoading || !user) {
     return (
       <div className="min-h-screen bg-bg-main flex items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-replit-orange">
@@ -48,75 +76,39 @@ export default function DashboardPage() {
     router.push('/login');
   };
 
-  // Mock list of recent room environments for UI workspace display (Phase 2 preview)
-  const recentRooms = [
-    {
-      id: 'rm-9a8b7c6d',
-      name: 'Algorithm Pairing Session',
-      language: 'TypeScript',
-      status: 'Ready (Phase 2)',
-      updated: '2 mins ago',
-    },
-    {
-      id: 'rm-5e4d3c2b',
-      name: 'Backend API Code Review',
-      language: 'Node.js',
-      status: 'Ready (Phase 2)',
-      updated: '1 hour ago',
-    },
-    {
-      id: 'rm-1f2e3d4c',
-      name: 'Data Structures Interview',
-      language: 'Python',
-      status: 'Ready (Phase 2)',
-      updated: 'Yesterday',
-    },
-  ];
-
   return (
     <div className="min-h-screen bg-bg-main text-text-main flex flex-col">
       {/* Replit Top Navigation Bar */}
       <header className="border-b border-border-subtle bg-bg-surface sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between">
           <div className="flex items-center gap-6">
-            {/* Logo */}
-            <div className="flex items-center gap-2">
+            <Link href="/dashboard" className="flex items-center gap-2">
               <div className="p-1.5 rounded bg-replit-orange/10 border border-replit-orange/30 text-replit-orange">
                 <Code2 className="w-5 h-5" />
               </div>
               <span className="text-base font-bold text-white tracking-tight">
                 CodeSync <span className="text-replit-orange font-mono">AI</span>
               </span>
-            </div>
+            </Link>
 
-            {/* Nav Tabs */}
             <nav className="flex items-center gap-1">
-              <button
-                onClick={() => setActiveTab('dashboard')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  activeTab === 'dashboard'
-                    ? 'bg-bg-secondary text-white border border-border-subtle'
-                    : 'text-text-muted hover:text-white'
-                }`}
+              <Link
+                href="/dashboard"
+                className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium bg-bg-secondary text-white border border-border-subtle"
               >
                 <LayoutDashboard className="w-3.5 h-3.5" />
                 Dashboard
-              </button>
-              <button
-                onClick={() => setActiveTab('rooms')}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
-                  activeTab === 'rooms'
-                    ? 'bg-bg-secondary text-white border border-border-subtle'
-                    : 'text-text-muted hover:text-white'
-                }`}
+              </Link>
+              <Link
+                href="/rooms"
+                className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium text-text-muted hover:text-white transition-colors"
               >
                 <FolderGit2 className="w-3.5 h-3.5" />
                 Rooms
-              </button>
+              </Link>
             </nav>
           </div>
 
-          {/* User Section */}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 px-2.5 py-1 rounded bg-bg-secondary border border-border-subtle text-xs font-mono">
               <div className="w-2 h-2 rounded-full bg-emerald-400" />
@@ -141,32 +133,26 @@ export default function DashboardPage() {
           <div>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono mb-2">
               <CheckCircle2 className="w-3.5 h-3.5" />
-              Phase 1 Auth Active -- Replit Theme Verified
+              Phase 2 Coding Rooms Module Active
             </div>
             <h1 className="text-2xl font-bold text-white tracking-tight">
               Welcome back, {user.name}
             </h1>
             <p className="text-xs text-text-muted mt-1">
-              Logged in as <span className="font-mono text-text-main">{user.email}</span>. Your session is protected by HTTP-Only cookies & token rotation.
+              Logged in as <span className="font-mono text-text-main">{user.email}</span>. Your coding rooms and HTTP-only session are active.
             </p>
           </div>
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => alert('Room creation will be enabled in Phase 2!')}
-              className="btn-replit-primary text-xs"
-            >
+            <Link href="/rooms/create" className="btn-replit-primary text-xs">
               <Plus className="w-4 h-4" />
               Create Room
-            </button>
-            <button
-              onClick={() => alert('Joining rooms will be enabled in Phase 2!')}
-              className="btn-replit-secondary text-xs"
-            >
-              <LogIn className="w-4 h-4" />
-              Join Room
-            </button>
+            </Link>
+            <Link href="/rooms" className="btn-replit-secondary text-xs">
+              <FolderGit2 className="w-4 h-4" />
+              View Rooms
+            </Link>
           </div>
         </div>
 
@@ -175,50 +161,68 @@ export default function DashboardPage() {
           <div className="px-5 py-3.5 border-b border-border-subtle bg-bg-surface flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Terminal className="w-4 h-4 text-replit-orange" />
-              <h2 className="text-sm font-bold text-white">Recent Coding Rooms</h2>
+              <h2 className="text-sm font-bold text-white">My Coding Rooms</h2>
             </div>
-            <span className="text-[11px] font-mono text-text-muted">Phase 2 Coding Rooms Module</span>
+            <Link href="/rooms" className="text-[11px] font-mono text-replit-orange hover:underline">
+              View All Rooms →
+            </Link>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-border-subtle bg-bg-secondary/40 text-[11px] font-mono text-text-muted uppercase tracking-wider">
-                  <th className="px-5 py-2.5 font-medium">Room Name</th>
-                  <th className="px-5 py-2.5 font-medium">Room ID</th>
-                  <th className="px-5 py-2.5 font-medium">Language</th>
-                  <th className="px-5 py-2.5 font-medium">Status</th>
-                  <th className="px-5 py-2.5 font-medium text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-subtle text-xs">
-                {recentRooms.map((room) => (
-                  <tr key={room.id} className="hover:bg-bg-secondary/50 transition-colors">
-                    <td className="px-5 py-3 font-medium text-white flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full bg-replit-orange" />
-                      {room.name}
-                    </td>
-                    <td className="px-5 py-3 font-mono text-text-muted">{room.id}</td>
-                    <td className="px-5 py-3 font-mono">
-                      <span className="px-2 py-0.5 rounded bg-bg-secondary border border-border-subtle text-text-muted">
-                        {room.language}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 font-mono text-emerald-400">{room.status}</td>
-                    <td className="px-5 py-3 text-right">
-                      <button
-                        onClick={() => alert(`Room ${room.id} is queued for Phase 2 implementation.`)}
-                        className="inline-flex items-center gap-1 text-replit-orange hover:underline font-mono text-[11px]"
-                      >
-                        Open
-                        <ArrowUpRight className="w-3.5 h-3.5" />
-                      </button>
-                    </td>
+          {isRoomsLoading ? (
+            <div className="py-8 text-center text-text-muted flex flex-col items-center gap-2">
+              <Loader2 className="w-5 h-5 animate-spin text-replit-orange" />
+              <span className="text-xs font-mono">Loading rooms...</span>
+            </div>
+          ) : rooms.length === 0 ? (
+            <div className="py-12 text-center text-text-muted flex flex-col items-center gap-2">
+              <FolderPlus className="w-6 h-6 text-border-subtle" />
+              <p className="text-xs font-mono text-white">No coding rooms found</p>
+              <Link href="/rooms/create" className="btn-replit-primary text-xs mt-1">
+                <Plus className="w-3.5 h-3.5" />
+                Create First Room
+              </Link>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-border-subtle bg-bg-secondary/40 text-[11px] font-mono text-text-muted uppercase tracking-wider">
+                    <th className="px-5 py-2.5 font-medium">Room Name</th>
+                    <th className="px-5 py-2.5 font-medium">Room ID</th>
+                    <th className="px-5 py-2.5 font-medium">Language</th>
+                    <th className="px-5 py-2.5 font-medium">Status</th>
+                    <th className="px-5 py-2.5 font-medium text-right">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-border-subtle text-xs">
+                  {rooms.map((room) => (
+                    <tr key={room.id} className="hover:bg-bg-secondary/50 transition-colors">
+                      <td className="px-5 py-3 font-medium text-white flex items-center gap-2">
+                        <div className="w-2 h-2 rounded-full bg-replit-orange" />
+                        {room.name}
+                      </td>
+                      <td className="px-5 py-3 font-mono text-text-muted text-[11px]">{room.id}</td>
+                      <td className="px-5 py-3 font-mono">
+                        <span className="px-2 py-0.5 rounded bg-bg-secondary border border-border-subtle text-text-muted">
+                          {room.language}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 font-mono text-emerald-400">{room.status}</td>
+                      <td className="px-5 py-3 text-right">
+                        <Link
+                          href={`/room/${room.id}`}
+                          className="inline-flex items-center gap-1 text-replit-orange hover:underline font-mono text-[11px]"
+                        >
+                          Open
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* User Account & Security Grid */}
@@ -282,11 +286,6 @@ export default function DashboardPage() {
           </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-border-subtle bg-bg-surface py-4 text-center text-xs text-text-muted font-mono">
-        CodeSync AI Platform -- Replit Developer Theme Workspace
-      </footer>
     </div>
   );
 }

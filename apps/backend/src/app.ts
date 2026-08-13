@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import { ENV } from './config/env';
 import authRoutes from './routes/auth.routes';
+import roomRoutes from './routes/room.routes';
 import { errorHandler } from './middleware/error.middleware';
 
 const app: Express = express();
@@ -33,6 +34,7 @@ app.get('/health', (_req: Request, res: Response) => {
 
 // API V1 Routes
 app.use('/api/v1/auth', authRoutes);
+app.use('/api/v1/rooms', roomRoutes);
 
 // Global Error Handler
 app.use(errorHandler);
