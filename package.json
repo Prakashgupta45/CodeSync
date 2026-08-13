@@ -1,0 +1,19 @@
+{
+  "name": "codesync-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered Real-Time Pair Programming and Coding Interview Platform",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspace=apps/backend",
+    "type-check": "npm run type-check --workspaces",
+    "lint": "npm run lint --workspaces"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}
