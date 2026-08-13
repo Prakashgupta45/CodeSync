@@ -2,9 +2,10 @@
 
 import React, { useEffect, useState, useCallback, use } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../context/auth-context';
-import { RoomDto, RoomMemberDto } from '@codesync/shared';
+import { RoomDto } from '@codesync/shared';
 import {
   Code2,
   Copy,
@@ -12,17 +13,30 @@ import {
   LogOut,
   Trash2,
   Users,
-  Shield,
-  Clock,
   Terminal,
   Loader2,
   AlertCircle,
   UserX,
   ArrowLeft,
   Info,
+  Clock,
 } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
+
+// Dynamically import RealtimeEditor with SSR disabled for Monaco & Yjs DOM compatibility
+const RealtimeEditor = dynamic(
+  () => import('../../../components/editor/realtime-editor').then((m) => m.RealtimeEditor),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex-1 card-replit bg-[#1e1e1e] flex items-center justify-center text-text-muted text-xs font-mono gap-2 min-h-[450px]">
+        <Loader2 className="w-5 h-5 animate-spin text-replit-orange" />
+        Loading Real-Time Collaborative Workspace...
+      </div>
+    ),
+  }
+);
 
 export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId: string }> }) {
   const resolvedParams = use(params);
@@ -187,7 +201,7 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
     );
   }
 
-  if (error || !room) {
+  if (error || !room || !user) {
     return (
       <div className="min-h-screen bg-bg-main flex items-center justify-center p-4">
         <div className="card-replit p-6 max-w-md w-full text-center space-y-4">
@@ -203,7 +217,8 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
     );
   }
 
-  const isOwner = room.ownerId === user?.id || room.role === 'OWNER';
+  const isOwner = room.ownerId === user.id || room.role === 'OWNER';
+  const currentRole = room.role || (isOwner ? 'OWNER' : 'PARTICIPANT');
 
   return (
     <div className="min-h-screen bg-bg-main text-text-main flex flex-col">
@@ -282,31 +297,14 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
 
       {/* Workspace Body */}
       <main className="max-w-7xl mx-auto px-4 py-6 flex-1 w-full grid md:grid-cols-3 gap-6">
-        {/* Editor Container Placeholder (Phase 3 Foundation) */}
-        <div className="md:col-span-2 card-replit flex flex-col overflow-hidden min-h-[500px]">
-          {/* Editor Header Bar */}
-          <div className="px-4 py-2 border-b border-border-subtle bg-bg-secondary/60 flex items-center justify-between text-xs font-mono">
-            <div className="flex items-center gap-2">
-              <span className="px-2.5 py-1 rounded-t bg-bg-surface text-white border-t border-x border-border-subtle flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full bg-replit-orange" />
-                main.{room.language === 'cpp' ? 'cpp' : room.language === 'python' ? 'py' : room.language === 'java' ? 'java' : 'js'}
-              </span>
-            </div>
-            <span className="text-[11px] text-text-muted">Phase 3 Editor Foundation</span>
-          </div>
-
-          {/* Code Editor Code Area Placeholder */}
-          <div className="p-6 bg-[#0e1117] flex-1 font-mono text-xs text-text-muted space-y-2 select-none">
-            <p className="text-gray-500">// ======================================================</p>
-            <p className="text-replit-orange font-bold">// CODESYNC AI - CODING ROOM WORKSPACE</p>
-            <p className="text-gray-400">// Room Name: {room.name}</p>
-            <p className="text-gray-400">// Room ID: {room.id}</p>
-            <p className="text-gray-400">// Language: {room.language}</p>
-            <p className="text-gray-500">// ======================================================</p>
-            <p className="text-emerald-400">// Phase 2 Room Management active and verified.</p>
-            <p className="text-gray-400">// Real-time collaborative editor (Monaco + Yjs + WebSockets)</p>
-            <p className="text-gray-400">// will be integrated in Phase 3.</p>
-          </div>
+        {/* Real-Time Monaco Editor + Yjs Collaborative Workspace Container */}
+        <div className="md:col-span-2 flex flex-col min-h-[500px]">
+          <RealtimeEditor
+            roomId={room.id}
+            language={room.language}
+            role={currentRole}
+            user={{ id: user.id, name: user.name }}
+          />
         </div>
 
         {/* Room Info & Member List Sidebar */}
@@ -328,7 +326,7 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
               <div>
                 <span className="text-[11px] text-text-muted block">YOUR ROLE</span>
                 <span className="inline-block px-2 py-0.5 rounded bg-replit-orange/20 text-replit-orange font-semibold mt-0.5">
-                  {room.role || 'MEMBER'}
+                  {currentRole}
                 </span>
               </div>
               <div>
@@ -382,7 +380,7 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
                     </span>
 
                     {/* Remove Member Button (Owner Only, Cannot Remove Self) */}
-                    {isOwner && m.userId !== user?.id && (
+                    {isOwner && m.userId !== user.id && (
                       <button
                         onClick={() => handleRemoveMember(m.userId, m.user.name)}
                         className="p-1 rounded text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors"

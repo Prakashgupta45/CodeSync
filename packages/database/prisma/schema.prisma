@@ -80,6 +80,7 @@ model Room {
   updatedAt DateTime   @updatedAt
 
   members   RoomMember[]
+  document  RoomDocument?
 
   @@index([ownerId])
   @@index([status])
@@ -99,4 +100,17 @@ model RoomMember {
   @@index([roomId])
   @@index([userId])
   @@map("room_members")
+}
+
+model RoomDocument {
+  id        String   @id @default(uuid())
+  roomId    String   @unique
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  content   String   @default("")
+  state     Bytes?
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("room_documents")
 }

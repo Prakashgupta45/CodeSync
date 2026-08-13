@@ -6,9 +6,9 @@ export const createRoomSchema = z.object({
     .min(2, 'Room name must be at least 2 characters long')
     .max(50, 'Room name must be less than 50 characters')
     .trim(),
-  language: z.enum(['javascript', 'python', 'cpp', 'java'], {
+  language: z.enum(['javascript', 'python', 'cpp', 'java', 'typescript'], {
     required_error: 'Language selection is required',
-    invalid_type_error: 'Supported languages are: javascript, python, cpp, java',
+    invalid_type_error: 'Supported languages are: javascript, python, cpp, java, typescript',
   }),
 });
 
