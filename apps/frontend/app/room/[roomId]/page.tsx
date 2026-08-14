@@ -51,6 +51,7 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
   const [copied, setCopied] = useState<boolean>(false);
   const [isLeaving, setIsLeaving] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
 
   const fetchRoomDetails = useCallback(async () => {
     try {
@@ -190,6 +191,29 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
     }
   };
 
+  const handleRoleChange = async (memberUserId: string, newRole: string) => {
+    try {
+      setUpdatingMemberId(memberUserId);
+      const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/members/${memberUserId}/role`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ role: newRole }),
+      });
+
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.error?.message || 'Failed to update member role');
+      }
+
+      await fetchRoomDetails();
+    } catch (err: any) {
+      alert(err.message || 'Failed to update member role');
+    } finally {
+      setUpdatingMemberId(null);
+    }
+  };
+
   if (isAuthLoading || isLoading) {
     return (
       <div className="min-h-screen bg-bg-main flex items-center justify-center">
@@ -217,8 +241,9 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
     );
   }
 
-  const isOwner = room.ownerId === user.id || room.role === 'OWNER';
-  const currentRole = room.role || (isOwner ? 'OWNER' : 'PARTICIPANT');
+  const userMember = room.members?.find((m) => m.userId === user.id);
+  const isOwner = room.ownerId === user.id || room.role === 'OWNER' || userMember?.role === 'OWNER';
+  const currentRole = userMember?.role || room.role || (isOwner ? 'OWNER' : 'PARTICIPANT');
 
   return (
     <div className="min-h-screen bg-bg-main text-text-main flex flex-col">
@@ -369,15 +394,30 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
-                        m.role === 'OWNER'
-                          ? 'bg-replit-orange/20 text-replit-orange'
-                          : 'bg-bg-surface text-text-muted border border-border-subtle'
-                      }`}
-                    >
-                      {m.role}
-                    </span>
+                    {/* Role Badge / Owner Selector */}
+                    {isOwner && m.userId !== user.id ? (
+                      <div className="relative">
+                        <select
+                          value={m.role}
+                          disabled={updatingMemberId === m.userId}
+                          onChange={(e) => handleRoleChange(m.userId, e.target.value)}
+                          className="px-2 py-0.5 rounded bg-bg-surface text-text-main border border-border-subtle text-[10px] font-mono font-semibold focus:outline-none focus:border-replit-orange transition-colors cursor-pointer disabled:opacity-50"
+                        >
+                          <option value="PARTICIPANT">PARTICIPANT</option>
+                          <option value="VIEWER">VIEWER</option>
+                        </select>
+                      </div>
+                    ) : (
+                      <span
+                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                          m.role === 'OWNER'
+                            ? 'bg-replit-orange/20 text-replit-orange'
+                            : 'bg-bg-surface text-text-muted border border-border-subtle'
+                        }`}
+                      >
+                        {m.role}
+                      </span>
+                    )}
 
                     {/* Remove Member Button (Owner Only, Cannot Remove Self) */}
                     {isOwner && m.userId !== user.id && (

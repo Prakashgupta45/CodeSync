@@ -314,6 +314,60 @@ export class RoomService {
 
     return { success: true };
   }
+
+  public async updateMemberRole(
+    roomId: string,
+    ownerUserId: string,
+    targetUserId: string,
+    newRole: RoomRole
+  ): Promise<RoomMemberDto> {
+    const room = await prisma.room.findUnique({
+      where: { id: roomId },
+      include: {
+        members: {
+          include: {
+            user: {
+              select: { id: true, name: true, email: true, avatarUrl: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!room) {
+      throw new AppError('Room not found', 404, 'ROOM_NOT_FOUND');
+    }
+
+    if (room.ownerId !== ownerUserId) {
+      throw new AppError('Only the room owner can change member roles', 403, 'FORBIDDEN');
+    }
+
+    if (ownerUserId === targetUserId) {
+      throw new AppError('Owner cannot change their own role', 400, 'CANNOT_CHANGE_OWN_ROLE');
+    }
+
+    if (newRole !== 'PARTICIPANT' && newRole !== 'VIEWER') {
+      throw new AppError('Allowed roles are PARTICIPANT or VIEWER', 400, 'INVALID_ROLE');
+    }
+
+    const targetMember = room.members.find((m) => m.userId === targetUserId);
+    if (!targetMember) {
+      throw new AppError('Target user is not a member of this room', 404, 'MEMBER_NOT_FOUND');
+    }
+
+    const updatedMember = await prisma.roomMember.update({
+      where: { id: targetMember.id },
+      data: { role: newRole as any },
+      include: {
+        user: {
+          select: { id: true, name: true, email: true, avatarUrl: true },
+        },
+      },
+    });
+
+    return this.formatRoomMember(updatedMember);
+  }
 }
 
 export const roomService = new RoomService();
+

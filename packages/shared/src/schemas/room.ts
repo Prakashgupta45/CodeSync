@@ -13,3 +13,12 @@ export const createRoomSchema = z.object({
 });
 
 export type CreateRoomInput = z.infer<typeof createRoomSchema>;
+
+export const updateMemberRoleSchema = z.object({
+  role: z.enum(['PARTICIPANT', 'VIEWER'], {
+    required_error: 'Role is required',
+    invalid_type_error: 'Allowed roles are PARTICIPANT or VIEWER',
+  }),
+});
+
+export type UpdateMemberRoleInput = z.infer<typeof updateMemberRoleSchema>;

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { roomController } from '../controllers/room.controller';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { validateRequest } from '../middleware/validate.middleware';
-import { createRoomSchema } from '@codesync/shared';
+import { createRoomSchema, updateMemberRoleSchema } from '@codesync/shared';
 
 const router = Router();
 
@@ -17,5 +17,6 @@ router.post('/:roomId/leave', roomController.leave);
 router.delete('/:roomId', roomController.delete);
 router.get('/:roomId/members', roomController.getMembers);
 router.delete('/:roomId/members/:userId', roomController.removeMember);
+router.patch('/:roomId/members/:userId/role', validateRequest(updateMemberRoleSchema), roomController.updateMemberRole);
 
 export default router;

@@ -150,6 +150,27 @@ export class RoomController {
       next(error);
     }
   };
+
+  public updateMemberRole = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const ownerUserId = req.user!.userId;
+      const roomId = String(req.params.roomId);
+      const memberUserId = String(req.params.userId);
+      const { role } = req.body;
+
+      const updatedMember = await roomService.updateMemberRole(roomId, ownerUserId, memberUserId, role);
+
+      const response: ApiResponse<RoomMemberDto> = {
+        success: true,
+        message: 'Member role updated successfully',
+        data: updatedMember,
+      };
+
+      res.status(200).json(response);
+    } catch (error) {
+      next(error);
+    }
+  };
 }
 
 export const roomController = new RoomController();

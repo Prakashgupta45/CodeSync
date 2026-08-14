@@ -29,10 +29,21 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
   const docRef = useRef<Y.Doc | null>(null);
   const isInternalChange = useRef<boolean>(false);
 
+  const isReadOnly = role === 'VIEWER';
+  const isReadOnlyRef = useRef<boolean>(isReadOnly);
+
   const [connectionStatus, setConnectionStatus] = useState<
     'connecting' | 'connected' | 'disconnected' | 'error'
   >('connecting');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Dynamically update Monaco options & ref whenever role/isReadOnly changes
+  useEffect(() => {
+    isReadOnlyRef.current = isReadOnly;
+    if (editorRef.current) {
+      editorRef.current.updateOptions({ readOnly: isReadOnly });
+    }
+  }, [isReadOnly]);
 
   // Map room language string to Monaco editor language identifier
   const getMonacoLanguage = (lang: string): string => {
@@ -55,16 +66,14 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
     }
   };
 
-  const isReadOnly = role === 'VIEWER';
-
   const handleEditorDidMount: OnMount = useCallback(
     (editor) => {
       editorRef.current = editor;
 
-      // Monaco Editor Options
+      // Initialize Monaco Editor Options with current isReadOnly state
       editor.updateOptions({
         theme: 'vs-dark',
-        readOnly: isReadOnly,
+        readOnly: isReadOnlyRef.current,
         fontSize: 13,
         fontFamily: "'JetBrains Mono', 'Fira Code', 'Menlo', 'Monaco', 'Consolas', monospace",
         minimap: { enabled: false },
@@ -98,9 +107,15 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
         socket.emit('collaboration:join', { roomId });
       });
 
-      socket.on('collaboration:sync', (data: { state: number[]; content?: string }) => {
+      socket.on('collaboration:sync', (data: { state: number[]; content?: string; role?: string }) => {
         setConnectionStatus('connected');
         setErrorMessage(null);
+
+        // Dynamic check if server returns VIEWER role
+        if (data.role === 'VIEWER') {
+          isReadOnlyRef.current = true;
+          editor.updateOptions({ readOnly: true });
+        }
 
         if (data.state && data.state.length > 0) {
           Y.applyUpdate(doc, new Uint8Array(data.state), 'initial-sync');
@@ -112,7 +127,7 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
         isInternalChange.current = false;
       });
 
-      // Handle CRDT updates from other clients
+      // Handle CRDT updates from other clients (VIEWER still receives & renders these live)
       socket.on('collaboration:update', (data: { update: number[]; userId: string }) => {
         if (data.update && data.userId !== user.id) {
           Y.applyUpdate(doc, new Uint8Array(data.update), 'remote');
@@ -132,7 +147,7 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
         setConnectionStatus('disconnected');
       });
 
-      // Sync Y.Text modifications -> Monaco Editor View
+      // Sync Y.Text modifications -> Monaco Editor View (Applies for all roles including VIEWER)
       yText.observe((event) => {
         if (event.transaction.origin === 'remote' || event.transaction.origin === 'initial-sync') {
           const updatedContent = yText.toString();
@@ -147,9 +162,9 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
         }
       });
 
-      // Transmit Monaco changes -> Yjs CRDT Document -> Socket.IO Server
+      // Transmit Monaco changes -> Yjs CRDT Document -> Socket.IO Server (STRICTLY BLOCKED FOR VIEWER)
       editor.onDidChangeModelContent(() => {
-        if (isInternalChange.current || isReadOnly) return;
+        if (isInternalChange.current || isReadOnlyRef.current) return;
 
         const newText = editor.getValue();
         if (newText !== yText.toString()) {
@@ -160,9 +175,9 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
         }
       });
 
-      // Broadcast Yjs updates to Socket.IO server
+      // Broadcast Yjs updates to Socket.IO server (STRICTLY BLOCKED FOR VIEWER)
       doc.on('update', (update: Uint8Array, origin: any) => {
-        if (origin !== 'remote' && origin !== 'initial-sync' && !isReadOnly) {
+        if (origin !== 'remote' && origin !== 'initial-sync' && !isReadOnlyRef.current) {
           socket.emit('collaboration:update', {
             roomId,
             update: Array.from(update),
@@ -170,7 +185,7 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
         }
       });
     },
-    [roomId, isReadOnly, user.id]
+    [roomId, user.id]
   );
 
   useEffect(() => {

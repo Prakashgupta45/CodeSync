@@ -406,4 +406,135 @@ describe('Coding Rooms Domain & Authorization Security Suite', () => {
     const memberCount = await prisma.roomMember.count({ where: { roomId } });
     expect(memberCount).toBe(0);
   });
+
+  describe('PATCH /api/v1/rooms/:roomId/members/:userId/role (Role Management)', () => {
+    it('23. OWNER can change PARTICIPANT -> VIEWER', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/rooms')
+        .set('Cookie', ownerCookie)
+        .send({ name: 'Role Test Room 1', language: 'python' });
+      const roomId = createRes.body.data.id;
+
+      await request(app).post(`/api/v1/rooms/${roomId}/join`).set('Cookie', participantCookie);
+
+      const patchRes = await request(app)
+        .patch(`/api/v1/rooms/${roomId}/members/${participantUserId}/role`)
+        .set('Cookie', ownerCookie)
+        .send({ role: 'VIEWER' });
+
+      expect(patchRes.status).toBe(200);
+      expect(patchRes.body.success).toBe(true);
+      expect(patchRes.body.data.role).toBe('VIEWER');
+
+      const memberInDb = await prisma.roomMember.findUnique({
+        where: { roomId_userId: { roomId, userId: participantUserId } },
+      });
+      expect(memberInDb?.role).toBe('VIEWER');
+    });
+
+    it('24. OWNER can change VIEWER -> PARTICIPANT', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/rooms')
+        .set('Cookie', ownerCookie)
+        .send({ name: 'Role Test Room 2', language: 'javascript' });
+      const roomId = createRes.body.data.id;
+
+      await prisma.roomMember.create({
+        data: { roomId, userId: participantUserId, role: 'VIEWER' },
+      });
+
+      const patchRes = await request(app)
+        .patch(`/api/v1/rooms/${roomId}/members/${participantUserId}/role`)
+        .set('Cookie', ownerCookie)
+        .send({ role: 'PARTICIPANT' });
+
+      expect(patchRes.status).toBe(200);
+      expect(patchRes.body.data.role).toBe('PARTICIPANT');
+    });
+
+    it('25. Non-owner cannot change role', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/rooms')
+        .set('Cookie', ownerCookie)
+        .send({ name: 'Role Test Room 3', language: 'typescript' });
+      const roomId = createRes.body.data.id;
+
+      await request(app).post(`/api/v1/rooms/${roomId}/join`).set('Cookie', participantCookie);
+
+      const patchRes = await request(app)
+        .patch(`/api/v1/rooms/${roomId}/members/${participantUserId}/role`)
+        .set('Cookie', participantCookie)
+        .send({ role: 'VIEWER' });
+
+      expect(patchRes.status).toBe(403);
+      expect(patchRes.body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('26. OWNER cannot change own role', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/rooms')
+        .set('Cookie', ownerCookie)
+        .send({ name: 'Role Test Room 4', language: 'cpp' });
+      const roomId = createRes.body.data.id;
+
+      const patchRes = await request(app)
+        .patch(`/api/v1/rooms/${roomId}/members/${ownerUserId}/role`)
+        .set('Cookie', ownerCookie)
+        .send({ role: 'VIEWER' });
+
+      expect(patchRes.status).toBe(400);
+      expect(patchRes.body.error.code).toBe('CANNOT_CHANGE_OWN_ROLE');
+    });
+
+    it('27. OWNER cannot assign OWNER role via endpoint', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/rooms')
+        .set('Cookie', ownerCookie)
+        .send({ name: 'Role Test Room 5', language: 'java' });
+      const roomId = createRes.body.data.id;
+
+      await request(app).post(`/api/v1/rooms/${roomId}/join`).set('Cookie', participantCookie);
+
+      const patchRes = await request(app)
+        .patch(`/api/v1/rooms/${roomId}/members/${participantUserId}/role`)
+        .set('Cookie', ownerCookie)
+        .send({ role: 'OWNER' });
+
+      expect(patchRes.status).toBe(400);
+    });
+
+    it('28. Invalid role rejected', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/rooms')
+        .set('Cookie', ownerCookie)
+        .send({ name: 'Role Test Room 6', language: 'python' });
+      const roomId = createRes.body.data.id;
+
+      await request(app).post(`/api/v1/rooms/${roomId}/join`).set('Cookie', participantCookie);
+
+      const patchRes = await request(app)
+        .patch(`/api/v1/rooms/${roomId}/members/${participantUserId}/role`)
+        .set('Cookie', ownerCookie)
+        .send({ role: 'SUPER_ADMIN' });
+
+      expect(patchRes.status).toBe(400);
+    });
+
+    it('29. Non-member target rejected', async () => {
+      const createRes = await request(app)
+        .post('/api/v1/rooms')
+        .set('Cookie', ownerCookie)
+        .send({ name: 'Role Test Room 7', language: 'javascript' });
+      const roomId = createRes.body.data.id;
+
+      const patchRes = await request(app)
+        .patch(`/api/v1/rooms/${roomId}/members/${nonMemberUserId}/role`)
+        .set('Cookie', ownerCookie)
+        .send({ role: 'VIEWER' });
+
+      expect(patchRes.status).toBe(404);
+      expect(patchRes.body.error.code).toBe('MEMBER_NOT_FOUND');
+    });
+  });
 });
+
