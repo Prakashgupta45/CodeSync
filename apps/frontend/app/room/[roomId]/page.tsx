@@ -5,7 +5,9 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../context/auth-context';
-import { RoomDto } from '@codesync/shared';
+import { RoomDto, RoomPresenceUserDto } from '@codesync/shared';
+import { Socket } from 'socket.io-client';
+import { RoomChatPanel } from '../../../components/chat/room-chat-panel';
 import {
   Code2,
   Copy,
@@ -20,6 +22,7 @@ import {
   ArrowLeft,
   Info,
   Clock,
+  MessageSquare,
 } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
@@ -52,6 +55,12 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
   const [isLeaving, setIsLeaving] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
+
+  // Real-Time Socket.IO, Chat & Presence State
+  const [socket, setSocket] = useState<Socket | null>(null);
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
+  const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUserDto[]>([]);
 
   const fetchRoomDetails = useCallback(async () => {
     try {
@@ -275,6 +284,20 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
 
           {/* Action Toolbar */}
           <div className="flex items-center gap-2">
+            {/* Real-Time Chat & Presence Toggle Button */}
+            <button
+              onClick={() => setIsChatOpen((prev) => !prev)}
+              className="btn-replit-secondary text-xs relative flex items-center gap-1.5"
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-replit-orange" />
+              <span>Chat & Members</span>
+              {unreadCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-replit-orange text-white text-[10px] font-bold font-mono">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
+
             {/* Copy Invite Link */}
             <button
               onClick={handleCopyInvite}
@@ -321,120 +344,144 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
       </header>
 
       {/* Workspace Body */}
-      <main className="max-w-7xl mx-auto px-4 py-6 flex-1 w-full grid md:grid-cols-3 gap-6">
-        {/* Real-Time Monaco Editor + Yjs Collaborative Workspace Container */}
-        <div className="md:col-span-2 flex flex-col min-h-[500px]">
-          <RealtimeEditor
-            roomId={room.id}
-            language={room.language}
-            role={currentRole}
-            user={{ id: user.id, name: user.name }}
-          />
-        </div>
-
-        {/* Room Info & Member List Sidebar */}
-        <div className="space-y-6">
-          {/* Room Metadata Card */}
-          <div className="card-replit p-5 space-y-3">
-            <div className="flex items-center gap-2 text-replit-orange pb-2 border-b border-border-subtle">
-              <Info className="w-4 h-4" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">
-                Room Info
-              </h3>
-            </div>
-
-            <div className="space-y-2 text-xs font-mono">
-              <div>
-                <span className="text-[11px] text-text-muted block">ROOM ID</span>
-                <span className="text-white text-[11px] break-all">{room.id}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-muted block">YOUR ROLE</span>
-                <span className="inline-block px-2 py-0.5 rounded bg-replit-orange/20 text-replit-orange font-semibold mt-0.5">
-                  {currentRole}
-                </span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-muted block">CREATED AT</span>
-                <span className="text-text-muted text-[11px] flex items-center gap-1 mt-0.5">
-                  <Clock className="w-3 h-3 text-text-muted" />
-                  {new Date(room.createdAt).toLocaleString()}
-                </span>
-              </div>
-            </div>
+      <main className="max-w-7xl mx-auto px-4 py-6 flex-1 w-full flex gap-6 overflow-hidden">
+        {/* Main Grid: Editor + Room Info Sidebar */}
+        <div className="flex-1 grid md:grid-cols-3 gap-6 min-h-[500px]">
+          {/* Real-Time Monaco Editor + Yjs Collaborative Workspace Container */}
+          <div className="md:col-span-2 flex flex-col min-h-[500px]">
+            <RealtimeEditor
+              roomId={room.id}
+              language={room.language}
+              role={currentRole}
+              user={{ id: user.id, name: user.name }}
+              onSocketInit={(s) => setSocket(s)}
+              onPresenceUpdate={(users) => setPresenceUsers(users)}
+            />
           </div>
 
-          {/* Members List Card */}
-          <div className="card-replit p-5 space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
-              <div className="flex items-center gap-2 text-replit-orange">
-                <Users className="w-4 h-4" />
+          {/* Room Info & Member List Sidebar */}
+          <div className="space-y-6">
+            {/* Room Metadata Card */}
+            <div className="card-replit p-5 space-y-3">
+              <div className="flex items-center gap-2 text-replit-orange pb-2 border-b border-border-subtle">
+                <Info className="w-4 h-4" />
                 <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">
-                  Members ({room.members?.length || 0})
+                  Room Info
                 </h3>
               </div>
+
+              <div className="space-y-2 text-xs font-mono">
+                <div>
+                  <span className="text-[11px] text-text-muted block">ROOM ID</span>
+                  <span className="text-white text-[11px] break-all">{room.id}</span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-text-muted block">YOUR ROLE</span>
+                  <span className="inline-block px-2 py-0.5 rounded bg-replit-orange/20 text-replit-orange font-semibold mt-0.5">
+                    {currentRole}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-text-muted block">CREATED AT</span>
+                  <span className="text-text-muted text-[11px] flex items-center gap-1 mt-0.5">
+                    <Clock className="w-3 h-3 text-text-muted" />
+                    {new Date(room.createdAt).toLocaleString()}
+                  </span>
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-2.5">
-              {room.members?.map((m) => (
-                <div
-                  key={m.id}
-                  className="flex items-center justify-between p-2.5 rounded bg-bg-secondary/60 border border-border-subtle text-xs"
-                >
-                  <div className="flex items-center gap-2.5 overflow-hidden">
-                    <div className="w-7 h-7 rounded bg-replit-orange/20 border border-replit-orange/30 text-replit-orange font-mono font-bold flex items-center justify-center text-xs shrink-0">
-                      {m.user.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="truncate">
-                      <span className="text-white font-medium block truncate">{m.user.name}</span>
-                      <span className="text-[10px] text-text-muted font-mono block truncate">
-                        {m.user.email}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0">
-                    {/* Role Badge / Owner Selector */}
-                    {isOwner && m.userId !== user.id ? (
-                      <div className="relative">
-                        <select
-                          value={m.role}
-                          disabled={updatingMemberId === m.userId}
-                          onChange={(e) => handleRoleChange(m.userId, e.target.value)}
-                          className="px-2 py-0.5 rounded bg-bg-surface text-text-main border border-border-subtle text-[10px] font-mono font-semibold focus:outline-none focus:border-replit-orange transition-colors cursor-pointer disabled:opacity-50"
-                        >
-                          <option value="PARTICIPANT">PARTICIPANT</option>
-                          <option value="VIEWER">VIEWER</option>
-                        </select>
-                      </div>
-                    ) : (
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
-                          m.role === 'OWNER'
-                            ? 'bg-replit-orange/20 text-replit-orange'
-                            : 'bg-bg-surface text-text-muted border border-border-subtle'
-                        }`}
-                      >
-                        {m.role}
-                      </span>
-                    )}
-
-                    {/* Remove Member Button (Owner Only, Cannot Remove Self) */}
-                    {isOwner && m.userId !== user.id && (
-                      <button
-                        onClick={() => handleRemoveMember(m.userId, m.user.name)}
-                        className="p-1 rounded text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors"
-                        title="Remove member"
-                      >
-                        <UserX className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
+            {/* Members List Card */}
+            <div className="card-replit p-5 space-y-4">
+              <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
+                <div className="flex items-center gap-2 text-replit-orange">
+                  <Users className="w-4 h-4" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">
+                    Members ({room.members?.length || 0})
+                  </h3>
                 </div>
-              ))}
+              </div>
+
+              <div className="space-y-2.5">
+                {room.members?.map((m) => {
+                  const isOnline = presenceUsers.some((p) => p.userId === m.userId);
+                  return (
+                    <div
+                      key={m.id}
+                      className="flex items-center justify-between p-2.5 rounded bg-bg-secondary/60 border border-border-subtle text-xs"
+                    >
+                      <div className="flex items-center gap-2.5 overflow-hidden">
+                        <div className="relative shrink-0">
+                          <div className="w-7 h-7 rounded bg-replit-orange/20 border border-replit-orange/30 text-replit-orange font-mono font-bold flex items-center justify-center text-xs">
+                            {m.user.name.charAt(0).toUpperCase()}
+                          </div>
+                          {isOnline && (
+                            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-bg-main" />
+                          )}
+                        </div>
+                        <div className="truncate">
+                          <span className="text-white font-medium block truncate">{m.user.name}</span>
+                          <span className="text-[10px] text-text-muted font-mono block truncate">
+                            {m.user.email}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Role Badge / Owner Selector */}
+                        {isOwner && m.userId !== user.id ? (
+                          <div className="relative">
+                            <select
+                              value={m.role}
+                              disabled={updatingMemberId === m.userId}
+                              onChange={(e) => handleRoleChange(m.userId, e.target.value)}
+                              className="px-2 py-0.5 rounded bg-bg-surface text-text-main border border-border-subtle text-[10px] font-mono font-semibold focus:outline-none focus:border-replit-orange transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              <option value="PARTICIPANT">PARTICIPANT</option>
+                              <option value="VIEWER">VIEWER</option>
+                            </select>
+                          </div>
+                        ) : (
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
+                              m.role === 'OWNER'
+                                ? 'bg-replit-orange/20 text-replit-orange'
+                                : 'bg-bg-surface text-text-muted border border-border-subtle'
+                            }`}
+                          >
+                            {m.role}
+                          </span>
+                        )}
+
+                        {/* Remove Member Button (Owner Only, Cannot Remove Self) */}
+                        {isOwner && m.userId !== user.id && (
+                          <button
+                            onClick={() => handleRemoveMember(m.userId, m.user.name)}
+                            className="p-1 rounded text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors"
+                            title="Remove member"
+                          >
+                            <UserX className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Real-Time Room Chat & Presence Panel Sidebar */}
+        <RoomChatPanel
+          roomId={room.id}
+          user={{ id: user.id, name: user.name }}
+          socket={socket}
+          isOpen={isChatOpen}
+          onClose={() => setIsChatOpen(false)}
+          onUnreadCountChange={(count) => setUnreadCount(count)}
+          presenceUsers={presenceUsers}
+        />
       </main>
     </div>
   );

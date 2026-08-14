@@ -4,6 +4,8 @@ import cookie from 'cookie';
 import { verifyAccessToken } from '../utils/jwt';
 import { prisma } from '@codesync/database';
 import { collaborationService } from '../services/collaboration.service';
+import { chatService } from '../services/chat.service';
+import { presenceService } from '../services/presence.service';
 import { ACCESS_TOKEN_COOKIE } from '../utils/cookie';
 
 export interface AuthenticatedSocket extends Socket {
@@ -49,7 +51,7 @@ export function setupCollaborationSockets(io: Server) {
       }
 
       const payload = verifyAccessToken(token);
-      
+
       // Fetch user details for name
       const user = await prisma.user.findUnique({
         where: { id: payload.userId },
@@ -80,7 +82,7 @@ export function setupCollaborationSockets(io: Server) {
       return;
     }
 
-    // 1. Join Coding Room
+    // 1. Join Coding Room & Initialize Presence / Chat Session
     socket.on('collaboration:join', async (payload: { roomId: string }) => {
       try {
         const { roomId } = payload || {};
@@ -123,6 +125,14 @@ export function setupCollaborationSockets(io: Server) {
         const doc = await collaborationService.getOrCreateDoc(roomId, room.language);
         const stateVector = Y.encodeStateAsUpdate(doc);
 
+        // Update Presence tracker with multi-tab socket reference counting
+        const presenceResult = presenceService.userConnected(
+          roomId,
+          user.userId,
+          user.name || 'User',
+          member.role as any
+        );
+
         // Emit initial sync payload to joining socket
         socket.emit('collaboration:sync', {
           roomId,
@@ -132,12 +142,19 @@ export function setupCollaborationSockets(io: Server) {
           content: doc.getText('codemirror').toString(),
         });
 
-        // Notify room of user presence
-        socket.to(roomId).emit('collaboration:user-joined', {
-          userId: user.userId,
-          name: user.name,
-          role: member.role,
+        // Broadcast presence updates to room members
+        io.to(roomId).emit('presence:update', {
+          roomId,
+          users: presenceResult.users,
         });
+
+        if (presenceResult.isNewUser) {
+          socket.to(roomId).emit('presence:join', {
+            userId: user.userId,
+            name: user.name,
+            role: member.role,
+          });
+        }
       } catch (err: any) {
         socket.emit('collaboration:error', { message: err.message || 'Failed to join collaboration session' });
       }
@@ -187,14 +204,82 @@ export function setupCollaborationSockets(io: Server) {
       }
     });
 
-    // 4. Handle Disconnect
+    // 4. Real-Time Chat: Send Message
+    socket.on('chat:send', async (payload: { roomId: string; content: string }) => {
+      try {
+        const { roomId, content } = payload || {};
+        if (!roomId || typeof roomId !== 'string') {
+          socket.emit('chat:error', { message: 'Invalid room ID' });
+          return;
+        }
+
+        // chatService.createMessage verifies DB room membership for user.userId
+        const messageDto = await chatService.createMessage(roomId, user.userId, content);
+
+        // Broadcast message to all users in the room
+        io.to(roomId).emit('chat:message', messageDto);
+      } catch (err: any) {
+        socket.emit('chat:error', { message: err.message || 'Failed to send chat message' });
+      }
+    });
+
+    // 5. Real-Time Chat: History Fetch
+    socket.on('chat:history', async (payload: { roomId: string }) => {
+      try {
+        const { roomId } = payload || {};
+        if (!roomId || typeof roomId !== 'string') {
+          socket.emit('chat:error', { message: 'Invalid room ID' });
+          return;
+        }
+
+        // chatService.getRoomHistory verifies DB room membership for user.userId
+        const messages = await chatService.getRoomHistory(roomId, user.userId);
+        socket.emit('chat:history', { roomId, messages });
+      } catch (err: any) {
+        socket.emit('chat:error', { message: err.message || 'Failed to load chat history' });
+      }
+    });
+
+    // 6. Real-Time Chat: Typing Indicators
+    socket.on('chat:typing', (payload: { roomId: string }) => {
+      const { roomId } = payload || {};
+      if (roomId) {
+        socket.to(roomId).emit('chat:user-typing', {
+          userId: user.userId,
+          name: user.name,
+        });
+      }
+    });
+
+    socket.on('chat:stop-typing', (payload: { roomId: string }) => {
+      const { roomId } = payload || {};
+      if (roomId) {
+        socket.to(roomId).emit('chat:user-stop-typing', {
+          userId: user.userId,
+          name: user.name,
+        });
+      }
+    });
+
+    // 7. Handle Disconnect
     socket.on('disconnect', () => {
       const roomId = socket.data.roomId;
       if (roomId) {
         collaborationService.decrementClientCount(roomId);
-        socket.to(roomId).emit('collaboration:user-left', {
-          userId: user.userId,
-          name: user.name,
+
+        // Multi-tab socket reference counting update for presence
+        const presenceResult = presenceService.userDisconnected(roomId, user.userId);
+
+        if (presenceResult.userFullyDisconnected) {
+          socket.to(roomId).emit('presence:leave', {
+            userId: user.userId,
+            name: user.name,
+          });
+        }
+
+        io.to(roomId).emit('presence:update', {
+          roomId,
+          users: presenceResult.users,
         });
       }
     });

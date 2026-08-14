@@ -22,3 +22,14 @@ export const updateMemberRoleSchema = z.object({
 });
 
 export type UpdateMemberRoleInput = z.infer<typeof updateMemberRoleSchema>;
+
+export const sendChatMessageSchema = z.object({
+  roomId: z.string({ required_error: 'Room ID is required' }).uuid('Invalid room ID'),
+  content: z
+    .string({ required_error: 'Message content is required' })
+    .trim()
+    .min(1, 'Message cannot be empty')
+    .max(1000, 'Message cannot exceed 1000 characters'),
+});
+
+export type SendChatMessageInput = z.infer<typeof sendChatMessageSchema>;

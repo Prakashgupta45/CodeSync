@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import { io, Socket } from 'socket.io-client';
 import * as Y from 'yjs';
+import { RoomPresenceUserDto } from '@codesync/shared';
 import { Wifi, WifiOff, Loader2, Lock, Sparkles } from 'lucide-react';
 
 const API_SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || process.env.NEXT_PUBLIC_API_URL?.replace('/api/v1', '') || 'http://localhost:5000';
@@ -16,6 +17,8 @@ interface RealtimeEditorProps {
     id: string;
     name: string;
   };
+  onSocketInit?: (socket: Socket) => void;
+  onPresenceUpdate?: (users: RoomPresenceUserDto[]) => void;
 }
 
 export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
@@ -23,6 +26,8 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
   language,
   role,
   user,
+  onSocketInit,
+  onPresenceUpdate,
 }) => {
   const editorRef = useRef<any>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -101,6 +106,9 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
       });
 
       socketRef.current = socket;
+      if (onSocketInit) {
+        onSocketInit(socket);
+      }
 
       socket.on('connect', () => {
         setConnectionStatus('connecting');
@@ -125,6 +133,13 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
         isInternalChange.current = true;
         editor.setValue(initialCode);
         isInternalChange.current = false;
+      });
+
+      // Listen to presence updates
+      socket.on('presence:update', (data: { roomId: string; users: RoomPresenceUserDto[] }) => {
+        if (data.roomId === roomId && onPresenceUpdate) {
+          onPresenceUpdate(data.users);
+        }
       });
 
       // Handle CRDT updates from other clients (VIEWER still receives & renders these live)
@@ -185,7 +200,7 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
         }
       });
     },
-    [roomId, user.id]
+    [roomId, user.id, onSocketInit, onPresenceUpdate]
   );
 
   useEffect(() => {

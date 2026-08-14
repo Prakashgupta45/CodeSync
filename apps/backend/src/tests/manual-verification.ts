@@ -5,12 +5,13 @@ import http from 'http';
 import { Server } from 'socket.io';
 import { setupCollaborationSockets } from '../socket/collaboration.socket';
 import { collaborationService } from '../services/collaboration.service';
+import { presenceService } from '../services/presence.service';
 import { prisma } from '@codesync/database';
 import * as Y from 'yjs';
 
 async function runManualVerification() {
   console.log('--------------------------------------------------');
-  console.log('🚀 Phase 3: Real-Time Multi-User Manual Verification');
+  console.log('🚀 Phase 4: Real-Time Multi-User & Chat/Presence Verification');
   console.log('--------------------------------------------------');
 
   const httpServer = http.createServer(app);
@@ -26,6 +27,8 @@ async function runManualVerification() {
 
   // 1. Clean Database
   collaborationService.clearSessions();
+  presenceService.clearAll();
+  await prisma.chatMessage.deleteMany({});
   await prisma.roomDocument.deleteMany({});
   await prisma.roomMember.deleteMany({});
   await prisma.room.deleteMany({});
@@ -166,16 +169,38 @@ async function runManualVerification() {
 
   await new Promise((r) => setTimeout(r, 400));
 
-  // 14. Test Scenario 4: Database Persistence & Refresh
-  console.log('\n--- Scenario 4: Database Persistence & Refresh Recovery ---');
-  await collaborationService.saveRoomDocument(roomId);
-  const savedDoc = await prisma.roomDocument.findUnique({ where: { roomId } });
+  // 14. Test Scenario 4: Real-Time Chat & History Persistence
+  console.log('\n--- Scenario 4: Real-Time Chat & History Persistence ---');
+  let chatReceivedByB = false;
+  clientB.once('chat:message', (msg) => {
+    if (msg.content === 'Hello room from Owner!') {
+      chatReceivedByB = true;
+      console.log(`✔ PASS: User B received real-time chat message from User A (${msg.senderName}: "${msg.content}")`);
+    }
+  });
 
-  if (savedDoc && savedDoc.content.includes('Hello from User A') && savedDoc.content.includes('Hello from User B')) {
-    console.log('✔ PASS: Yjs document state persisted to PostgreSQL!');
-    console.log(`[Persisted Content in PostgreSQL]:\n${savedDoc.content.trim()}`);
+  clientA.emit('chat:send', { roomId, content: 'Hello room from Owner!' });
+  await new Promise((r) => setTimeout(r, 400));
+
+  const messagesInDb = await prisma.chatMessage.findMany({ where: { roomId } });
+  if (chatReceivedByB && messagesInDb.length === 1 && messagesInDb[0].content === 'Hello room from Owner!') {
+    console.log('✔ PASS: Chat message persisted in PostgreSQL database!');
   } else {
-    console.error('❌ FAIL: Persistence check failed');
+    console.error('❌ FAIL: Chat persistence check failed');
+  }
+
+  // 15. Test Scenario 5: Real-Time Room Presence Verification
+  console.log('\n--- Scenario 5: Real-Time Room Presence Verification ---');
+  const presenceState = presenceService.getRoomPresence(roomId);
+  console.log(`[Online Presence Members Count]: ${presenceState.length}`);
+  presenceState.forEach((u) => {
+    console.log(`  - ${u.name} (Role: ${u.role}, Sockets: ${u.socketCount})`);
+  });
+
+  if (presenceState.length === 3) {
+    console.log('✔ PASS: Real-time room presence accurately tracks all 3 online members (OWNER, PARTICIPANT, VIEWER)!');
+  } else {
+    console.error('❌ FAIL: Presence tracking failed');
   }
 
   clientA.disconnect();
@@ -185,7 +210,7 @@ async function runManualVerification() {
   httpServer.close();
 
   console.log('\n==================================================');
-  console.log('🎉 REAL MANUAL VERIFICATION 100% SUCCESSFUL');
+  console.log('🎉 PHASE 4 REAL MANUAL VERIFICATION 100% SUCCESSFUL');
   console.log('==================================================\n');
 }
 

@@ -56,3 +56,19 @@ export interface RoomDto {
   members?: RoomMemberDto[];
   owner?: RoomMemberUserDto;
 }
+
+export interface ChatMessageDto {
+  id: string;
+  roomId: string;
+  senderId: string;
+  senderName: string;
+  content: string;
+  createdAt: string;
+}
+
+export interface RoomPresenceUserDto {
+  userId: string;
+  name: string;
+  role: RoomRole;
+  socketCount: number;
+}

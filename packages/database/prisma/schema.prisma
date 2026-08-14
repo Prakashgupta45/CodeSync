@@ -37,6 +37,7 @@ model User {
   refreshTokens    RefreshToken[]
   ownedRooms       Room[]         @relation("OwnedRooms")
   roomMemberships  RoomMember[]   @relation("RoomMemberships")
+  chatMessages     ChatMessage[]
 
   @@map("users")
 }
@@ -79,8 +80,9 @@ model Room {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  members   RoomMember[]
-  document  RoomDocument?
+  members      RoomMember[]
+  document     RoomDocument?
+  chatMessages ChatMessage[]
 
   @@index([ownerId])
   @@index([status])
@@ -113,4 +115,17 @@ model RoomDocument {
   updatedAt DateTime @updatedAt
 
   @@map("room_documents")
+}
+
+model ChatMessage {
+  id        String   @id @default(uuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([roomId, createdAt])
+  @@map("chat_messages")
 }
