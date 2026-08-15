@@ -94,3 +94,17 @@ export interface RoomExecutionResultDto extends CodeExecutionResultDto {
   language: string;
   timestamp: string;
 }
+
+export type AiActionType = 'CHAT' | 'EXPLAIN' | 'DEBUG' | 'REFACTOR' | 'TESTS';
+
+export interface AiMessageDto {
+  id: string;
+  roomId: string;
+  userId: string;
+  userName: string;
+  userRole: RoomRole;
+  prompt: string;
+  response: string;
+  action: AiActionType;
+  createdAt: string;
+}

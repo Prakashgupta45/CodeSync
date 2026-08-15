@@ -194,20 +194,13 @@ export const RoomChatPanel: React.FC<RoomChatPanelProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="w-80 border-l border-border-subtle bg-bg-surface flex flex-col h-full shadow-2xl overflow-hidden text-xs font-sans select-none z-30">
+    <div className="card-replit border border-border-subtle bg-[#12141a] flex flex-col w-full min-h-[380px] max-h-[460px] shadow-lg rounded-lg overflow-hidden text-xs font-sans select-none">
       {/* Header Bar */}
       <div className="px-4 py-3 border-b border-border-subtle bg-bg-secondary flex items-center justify-between">
         <div className="flex items-center gap-2 font-mono">
           <MessageSquare className="w-4 h-4 text-replit-orange" />
           <h2 className="font-bold text-white text-xs uppercase tracking-wider">Room Workspace</h2>
         </div>
-
-        <button
-          onClick={onClose}
-          className="p-1 rounded text-text-muted hover:text-white hover:bg-bg-surface transition-colors"
-        >
-          <X className="w-4 h-4" />
-        </button>
       </div>
 
       {/* Tabs Header */}

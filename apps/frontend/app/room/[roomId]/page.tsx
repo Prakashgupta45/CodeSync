@@ -9,6 +9,7 @@ import { RoomDto, RoomPresenceUserDto } from '@codesync/shared';
 import { Socket } from 'socket.io-client';
 import { RoomChatPanel } from '../../../components/chat/room-chat-panel';
 import { ExecutionConsole } from '../../../components/editor/execution-console';
+import { AiAssistantPanel } from '../../../components/ai/ai-assistant-panel';
 import {
   Code2,
   Copy,
@@ -346,11 +347,11 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
       </header>
 
       {/* Workspace Body */}
-      <main className="max-w-7xl mx-auto px-4 py-6 flex-1 w-full flex gap-6 overflow-hidden">
+      <main className="max-w-7xl mx-auto px-4 py-6 flex-1 w-full overflow-y-auto">
         {/* Main Grid: Editor + Room Info Sidebar */}
         <div className="flex-1 grid md:grid-cols-3 gap-6 min-h-[500px]">
           {/* Real-Time Monaco Editor + Execution Console Container */}
-          <div className="md:col-span-2 flex flex-col space-y-4 min-h-[500px]">
+          <div className="md:col-span-2 flex flex-col space-y-4 min-h-0 min-w-0">
             <RealtimeEditor
               roomId={room.id}
               language={room.language}
@@ -362,6 +363,14 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
             />
 
             <ExecutionConsole
+              roomId={room.id}
+              language={room.language}
+              role={currentRole}
+              codeGetter={codeGetter}
+              socket={socket}
+            />
+
+            <AiAssistantPanel
               roomId={room.id}
               language={room.language}
               role={currentRole}
@@ -480,19 +489,19 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
                 })}
               </div>
             </div>
+
+            {/* Room Workspace (Chat + Online Members) Card */}
+            <RoomChatPanel
+              roomId={room.id}
+              user={{ id: user.id, name: user.name }}
+              socket={socket}
+              isOpen={true}
+              onClose={() => {}}
+              onUnreadCountChange={(count) => setUnreadCount(count)}
+              presenceUsers={presenceUsers}
+            />
           </div>
         </div>
-
-        {/* Real-Time Room Chat & Presence Panel Sidebar */}
-        <RoomChatPanel
-          roomId={room.id}
-          user={{ id: user.id, name: user.name }}
-          socket={socket}
-          isOpen={isChatOpen}
-          onClose={() => setIsChatOpen(false)}
-          onUnreadCountChange={(count) => setUnreadCount(count)}
-          presenceUsers={presenceUsers}
-        />
       </main>
     </div>
   );

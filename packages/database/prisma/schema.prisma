@@ -38,6 +38,7 @@ model User {
   ownedRooms       Room[]         @relation("OwnedRooms")
   roomMemberships  RoomMember[]   @relation("RoomMemberships")
   chatMessages     ChatMessage[]
+  aiMessages       AiMessage[]
 
   @@map("users")
 }
@@ -83,6 +84,7 @@ model Room {
   members      RoomMember[]
   document     RoomDocument?
   chatMessages ChatMessage[]
+  aiMessages   AiMessage[]
 
   @@index([ownerId])
   @@index([status])
@@ -128,4 +130,19 @@ model ChatMessage {
 
   @@index([roomId, createdAt])
   @@map("chat_messages")
+}
+
+model AiMessage {
+  id        String   @id @default(uuid())
+  roomId    String
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prompt    String
+  response  String
+  action    String   @default("CHAT")
+  createdAt DateTime @default(now())
+
+  @@index([roomId, createdAt])
+  @@map("ai_messages")
 }

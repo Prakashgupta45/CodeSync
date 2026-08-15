@@ -44,3 +44,13 @@ export const executeCodeSchema = z.object({
 });
 
 export type ExecuteCodeInput = z.infer<typeof executeCodeSchema>;
+
+export const aiPromptSchema = z.object({
+  roomId: z.string({ required_error: 'Room ID is required' }).uuid('Invalid room ID'),
+  prompt: z.string().max(4000, 'Prompt exceeds 4000 characters limit').optional(),
+  action: z.enum(['CHAT', 'EXPLAIN', 'DEBUG', 'REFACTOR', 'TESTS']).default('CHAT'),
+  code: z.string().max(50000, 'Code payload exceeds 50KB limit').optional(),
+  errorContext: z.string().max(10000, 'Error context exceeds 10KB limit').optional(),
+});
+
+export type AiPromptInput = z.infer<typeof aiPromptSchema>;

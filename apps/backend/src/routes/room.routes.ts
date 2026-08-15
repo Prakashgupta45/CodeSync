@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { roomController } from '../controllers/room.controller';
 import { executionController } from '../controllers/execution.controller';
+import aiRoutes from './ai.routes';
 import { authenticateToken } from '../middleware/auth.middleware';
 import { validateRequest } from '../middleware/validate.middleware';
 import { createRoomSchema, updateMemberRoleSchema } from '@codesync/shared';
@@ -22,5 +23,8 @@ router.patch('/:roomId/members/:userId/role', validateRequest(updateMemberRoleSc
 
 // POST /api/v1/rooms/:roomId/execute (Secure Docker Code Execution)
 router.post('/:roomId/execute', executionController.executeCode);
+
+// AI Assistant Routes
+router.use('/:roomId/ai', aiRoutes);
 
 export default router;
