@@ -15,7 +15,7 @@ import {
   Lock,
   User,
   Bot,
-  ChevronRight,
+  X,
 } from 'lucide-react';
 import { AiMessageDto, AiActionType } from '@codesync/shared';
 import { Socket } from 'socket.io-client';
@@ -29,6 +29,7 @@ interface AiAssistantPanelProps {
   codeGetter?: () => string;
   errorContextGetter?: () => string | null;
   socket?: Socket | null;
+  onClose?: () => void;
 }
 
 export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
@@ -38,6 +39,7 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
   codeGetter,
   errorContextGetter,
   socket,
+  onClose,
 }) => {
   const [messages, setMessages] = useState<AiMessageDto[]>([]);
   const [prompt, setPrompt] = useState<string>('');
@@ -136,7 +138,7 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
   };
 
   return (
-    <div className="card-replit flex flex-col w-full h-full min-h-[500px] bg-[#12141a] border border-border-subtle overflow-hidden text-xs font-mono select-none">
+    <div className="card-replit flex flex-col w-full h-full min-h-[420px] bg-[#12141a] border border-border-subtle rounded-lg overflow-hidden text-xs font-mono select-none shadow-lg">
       {/* AI Panel Header */}
       <div className="px-4 py-2.5 border-b border-border-subtle bg-bg-secondary flex items-center justify-between">
         <div className="flex items-center gap-2 font-bold text-white">
@@ -146,6 +148,16 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
             {language}
           </span>
         </div>
+
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-text-muted hover:text-white hover:bg-bg-surface transition-colors"
+            title="Close AI Pair Programmer Panel"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       {/* Quick AI Action Toolbar */}

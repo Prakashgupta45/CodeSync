@@ -6,6 +6,7 @@ import { prisma } from '@codesync/database';
 import { collaborationService } from '../services/collaboration.service';
 import { chatService } from '../services/chat.service';
 import { presenceService } from '../services/presence.service';
+import { callService } from '../services/call.service';
 import { ACCESS_TOKEN_COOKIE } from '../utils/cookie';
 
 export interface AuthenticatedSocket extends Socket {
@@ -98,104 +99,87 @@ export function setupCollaborationSockets(io: Server) {
           return;
         }
 
-        // Verify room and user membership
-        const room = await prisma.room.findUnique({
-          where: { id: roomId },
+        const roomMember = await prisma.roomMember.findUnique({
+          where: {
+            roomId_userId: {
+              roomId,
+              userId: user.userId,
+            },
+          },
           include: {
-            members: true,
+            room: true,
           },
         });
 
-        if (!room) {
-          socket.emit('collaboration:error', { message: 'Coding room not found' });
-          return;
-        }
-
-        if (room.status === 'CLOSED') {
-          socket.emit('collaboration:error', { message: 'Cannot join a closed room' });
-          return;
-        }
-
-        const member = room.members.find((m) => m.userId === user.userId);
-        if (!member) {
+        if (!roomMember) {
           socket.emit('collaboration:error', { message: 'You are not a member of this room' });
           return;
         }
 
-        // Store active session metadata on socket
+        if (roomMember.room.status === 'CLOSED') {
+          socket.emit('collaboration:error', { message: 'Cannot join a closed room' });
+          return;
+        }
+
         socket.data.roomId = roomId;
-        socket.data.role = member.role as 'OWNER' | 'PARTICIPANT' | 'VIEWER';
+        socket.data.role = roomMember.role;
 
         socket.join(roomId);
 
-        // Fetch or create room Yjs document
-        const doc = await collaborationService.getOrCreateDoc(roomId, room.language);
-        const stateVector = Y.encodeStateAsUpdate(doc);
-
-        // Update Presence tracker with multi-tab socket reference counting
         const presenceResult = presenceService.userConnected(
           roomId,
           user.userId,
           user.name || 'User',
-          member.role as any
+          roomMember.role
         );
 
-        // Emit initial sync payload to joining socket
-        socket.emit('collaboration:sync', {
-          roomId,
-          language: room.language,
-          role: member.role,
-          state: Array.from(stateVector),
-          content: doc.getText('codemirror').toString(),
-        });
-
-        // Broadcast presence updates to room members
         io.to(roomId).emit('presence:update', {
           roomId,
           users: presenceResult.users,
         });
 
-        if (presenceResult.isNewUser) {
-          socket.to(roomId).emit('presence:join', {
-            userId: user.userId,
-            name: user.name,
-            role: member.role,
-          });
-        }
+        socket.to(roomId).emit('presence:join', {
+          userId: user.userId,
+          name: user.name,
+          role: roomMember.role,
+        });
+
+        const doc = await collaborationService.getOrCreateDoc(roomId, roomMember.room.language);
+        const state = Y.encodeStateAsUpdate(doc);
+
+        socket.emit('collaboration:sync', {
+          roomId,
+          role: roomMember.role,
+          language: roomMember.room.language,
+          state: Array.from(state),
+        });
       } catch (err: any) {
         socket.emit('collaboration:error', { message: err.message || 'Failed to join collaboration session' });
       }
     });
 
-    // 2. Real-Time CRDT Update
-    socket.on('collaboration:update', (payload: { roomId: string; update: number[] }) => {
+    // 2. Yjs Document Updates (Viewer Read-Only Restriction Enforced)
+    socket.on('collaboration:update', async (payload: { roomId: string; update: number[] }) => {
       try {
         const { roomId, update } = payload || {};
-        if (!roomId || !update || !Array.isArray(update)) return;
-
-        // Security Authorization Guard: Must be joined to target room
-        if (socket.data.roomId !== roomId) {
-          socket.emit('collaboration:error', { message: 'Unauthorized room update attempt' });
+        if (!roomId || !update || socket.data.roomId !== roomId) {
           return;
         }
 
-        // Security Authorization Guard: Viewer cannot edit
         if (socket.data.role === 'VIEWER') {
           socket.emit('collaboration:error', { message: 'Viewers have read-only access and cannot edit' });
           return;
         }
 
-        const uint8Update = new Uint8Array(update);
-        collaborationService.applyUpdate(roomId, uint8Update);
+        const doc = collaborationService.getDoc(roomId) || (await collaborationService.getOrCreateDoc(roomId, 'javascript'));
+        Y.applyUpdate(doc, new Uint8Array(update));
 
-        // Broadcast update to all other connected room members
         socket.to(roomId).emit('collaboration:update', {
           roomId,
-          userId: user.userId,
-          update: Array.from(uint8Update),
+          update,
         });
       } catch (err: any) {
-        socket.emit('collaboration:error', { message: err.message || 'Failed to process collaboration update' });
+        socket.emit('collaboration:error', { message: 'Failed to process document update' });
       }
     });
 
@@ -220,10 +204,7 @@ export function setupCollaborationSockets(io: Server) {
           return;
         }
 
-        // chatService.createMessage verifies DB room membership for user.userId
         const messageDto = await chatService.createMessage(roomId, user.userId, content);
-
-        // Broadcast message to all users in the room
         io.to(roomId).emit('chat:message', messageDto);
       } catch (err: any) {
         socket.emit('chat:error', { message: err.message || 'Failed to send chat message' });
@@ -239,7 +220,6 @@ export function setupCollaborationSockets(io: Server) {
           return;
         }
 
-        // chatService.getRoomHistory verifies DB room membership for user.userId
         const messages = await chatService.getRoomHistory(roomId, user.userId);
         socket.emit('chat:history', { roomId, messages });
       } catch (err: any) {
@@ -268,11 +248,112 @@ export function setupCollaborationSockets(io: Server) {
       }
     });
 
-    // 7. Handle Disconnect
+    // 7. Phase 7: WebRTC Real-Time Video & Audio Signaling Handlers
+    socket.on('call:join', async (payload: { roomId: string }) => {
+      try {
+        const { roomId } = payload || {};
+        if (!roomId || typeof roomId !== 'string') {
+          socket.emit('call:error', { message: 'Invalid room ID provided' });
+          return;
+        }
+
+        const { participant, existingParticipants } = await callService.joinCall(roomId, user.userId);
+        socket.data.roomId = roomId;
+        socket.join(roomId);
+        socket.join(`call:${roomId}`);
+
+        socket.emit('call:sync', { roomId, participants: existingParticipants });
+
+        socket.to(roomId).emit('call:peer-joined', {
+          roomId,
+          participant,
+        });
+      } catch (err: any) {
+        socket.emit('call:error', { message: err.message || 'Failed to join video call' });
+      }
+    });
+
+    socket.on('call:leave', (payload: { roomId: string }) => {
+      const { roomId } = payload || {};
+      if (roomId) {
+        const leftParticipant = callService.leaveCall(roomId, user.userId);
+        if (leftParticipant) {
+          socket.leave(`call:${roomId}`);
+          io.to(roomId).emit('call:peer-left', {
+            roomId,
+            userId: user.userId,
+          });
+        }
+      }
+    });
+
+    socket.on('call:offer', (payload: { roomId: string; targetUserId: string; offer: any }) => {
+      const { roomId, targetUserId, offer } = payload || {};
+      if (roomId && targetUserId && offer) {
+        socket.to(roomId).emit('call:offer', {
+          roomId,
+          senderUserId: user.userId,
+          targetUserId,
+          offer,
+        });
+      }
+    });
+
+    socket.on('call:answer', (payload: { roomId: string; targetUserId: string; answer: any }) => {
+      const { roomId, targetUserId, answer } = payload || {};
+      if (roomId && targetUserId && answer) {
+        socket.to(roomId).emit('call:answer', {
+          roomId,
+          senderUserId: user.userId,
+          targetUserId,
+          answer,
+        });
+      }
+    });
+
+    socket.on('call:ice-candidate', (payload: { roomId: string; targetUserId: string; candidate: any }) => {
+      const { roomId, targetUserId, candidate } = payload || {};
+      if (roomId && targetUserId && candidate) {
+        socket.to(roomId).emit('call:ice-candidate', {
+          roomId,
+          senderUserId: user.userId,
+          targetUserId,
+          candidate,
+        });
+      }
+    });
+
+    socket.on('call:media-state', async (payload: { roomId: string; cameraEnabled: boolean; microphoneEnabled: boolean }) => {
+      try {
+        const { roomId, cameraEnabled, microphoneEnabled } = payload || {};
+        if (roomId) {
+          const updated = await callService.updateMediaState(roomId, user.userId, cameraEnabled, microphoneEnabled);
+          io.to(roomId).emit('call:media-state', {
+            roomId,
+            userId: user.userId,
+            cameraEnabled: updated.cameraEnabled,
+            microphoneEnabled: updated.microphoneEnabled,
+          });
+        }
+      } catch (err: any) {
+        socket.emit('call:error', { message: err.message || 'Failed to update media state' });
+      }
+    });
+
+    // 8. Handle Disconnect
     socket.on('disconnect', () => {
       const roomId = socket.data.roomId;
       if (roomId) {
         collaborationService.decrementClientCount(roomId);
+
+        // Leave active WebRTC call if connected
+        const leftCallParticipant = callService.leaveCall(roomId, user.userId);
+        if (leftCallParticipant) {
+          socket.to(roomId).emit('call:peer-left', {
+            roomId,
+            userId: user.userId,
+          });
+        }
 
         // Multi-tab socket reference counting update for presence
         const presenceResult = presenceService.userDisconnected(roomId, user.userId);

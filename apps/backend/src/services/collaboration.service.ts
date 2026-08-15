@@ -64,15 +64,21 @@ export class CollaborationService {
       const starterCode = this.getDefaultStarterCode(language, room?.name);
       yText.insert(0, starterCode);
 
-      // Create initial DB record
-      const update = Y.encodeStateAsUpdate(doc);
-      await prisma.roomDocument.create({
-        data: {
-          roomId,
-          content: starterCode,
-          state: Buffer.from(update),
-        },
-      });
+      // Only attempt DB persistence if room actually exists in database
+      if (room) {
+        try {
+          const update = Y.encodeStateAsUpdate(doc);
+          await prisma.roomDocument.upsert({
+            where: { roomId },
+            create: {
+              roomId,
+              content: starterCode,
+              state: Buffer.from(update),
+            },
+            update: {},
+          });
+        } catch (_) {}
+      }
     }
 
     // 3. Register document update listener for debounced autosave

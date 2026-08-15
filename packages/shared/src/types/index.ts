@@ -108,3 +108,43 @@ export interface AiMessageDto {
   action: AiActionType;
   createdAt: string;
 }
+
+export interface CallParticipantDto {
+  userId: string;
+  name: string;
+  role: RoomRole;
+  cameraEnabled: boolean;
+  microphoneEnabled: boolean;
+}
+
+export interface CallJoinPayload {
+  roomId: string;
+}
+
+export interface CallLeavePayload {
+  roomId: string;
+}
+
+export interface CallOfferPayload {
+  roomId: string;
+  targetUserId: string;
+  offer: any;
+}
+
+export interface CallAnswerPayload {
+  roomId: string;
+  targetUserId: string;
+  answer: any;
+}
+
+export interface CallIceCandidatePayload {
+  roomId: string;
+  targetUserId: string;
+  candidate: any;
+}
+
+export interface CallMediaStatePayload {
+  roomId: string;
+  cameraEnabled: boolean;
+  microphoneEnabled: boolean;
+}

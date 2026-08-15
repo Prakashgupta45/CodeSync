@@ -10,6 +10,7 @@ import { Socket } from 'socket.io-client';
 import { RoomChatPanel } from '../../../components/chat/room-chat-panel';
 import { ExecutionConsole } from '../../../components/editor/execution-console';
 import { AiAssistantPanel } from '../../../components/ai/ai-assistant-panel';
+import { RoomVideoPanel } from '../../../components/video/room-video-panel';
 import {
   Code2,
   Copy,
@@ -25,27 +26,35 @@ import {
   Info,
   Clock,
   MessageSquare,
+  Video,
+  Sparkles,
 } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
-// Dynamically import RealtimeEditor with SSR disabled for Monaco & Yjs DOM compatibility
+// Dynamic import for Monaco Editor component (CSR only)
 const RealtimeEditor = dynamic(
   () => import('../../../components/editor/realtime-editor').then((m) => m.RealtimeEditor),
   {
     ssr: false,
     loading: () => (
-      <div className="flex-1 card-replit bg-[#1e1e1e] flex items-center justify-center text-text-muted text-xs font-mono gap-2 min-h-[450px]">
-        <Loader2 className="w-5 h-5 animate-spin text-replit-orange" />
-        Loading Real-Time Collaborative Workspace...
+      <div className="h-[500px] w-full bg-[#12141a] border border-border-subtle rounded-lg flex items-center justify-center text-text-muted">
+        <div className="flex flex-col items-center gap-2 font-mono text-xs">
+          <Loader2 className="w-5 h-5 animate-spin text-replit-orange" />
+          <span>Initializing Real-Time Monaco Editor...</span>
+        </div>
       </div>
     ),
   }
 );
 
-export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId: string }> }) {
-  const resolvedParams = use(params);
-  const roomId = resolvedParams.roomId;
+interface RoomPageProps {
+  params: Promise<{ roomId: string }>;
+}
+
+export default function RoomPage({ params }: RoomPageProps) {
+  const unwrappedParams = use(params);
+  const roomId = unwrappedParams.roomId;
 
   const router = useRouter();
   const { user, isLoading: isAuthLoading } = useAuth();
@@ -58,9 +67,12 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
 
-  // Real-Time Socket.IO, Chat, Presence & Execution State
+  // Real-Time Socket.IO, Chat, Presence, WebRTC, AI & Execution State
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
+  const [isAiPanelOpen, setIsAiPanelOpen] = useState<boolean>(false);
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState<boolean>(false);
+  const [isWebRtcCallActive, setIsWebRtcCallActive] = useState<boolean>(false);
   const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUserDto[]>([]);
   const [codeGetter, setCodeGetter] = useState<(() => string) | undefined>(undefined);
   const [unreadCount, setUnreadCount] = useState<number>(0);
@@ -258,7 +270,7 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
   const currentRole = userMember?.role || room.role || (isOwner ? 'OWNER' : 'PARTICIPANT');
 
   return (
-    <div className="min-h-screen bg-bg-main text-text-main flex flex-col">
+    <div className="min-h-screen bg-bg-main text-text-main flex flex-col relative">
       {/* Top Header Bar */}
       <header className="border-b border-border-subtle bg-bg-surface sticky top-0 z-20">
         <div className="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
@@ -298,6 +310,18 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
                 <span className="px-1.5 py-0.2 rounded-full bg-replit-orange text-white text-[10px] font-bold font-mono">
                   {unreadCount}
                 </span>
+              )}
+            </button>
+
+            {/* Real-Time Video Call Modal Toggle Button */}
+            <button
+              onClick={() => setIsVideoModalOpen(true)}
+              className="btn-replit-secondary text-xs relative flex items-center gap-1.5"
+            >
+              <Video className="w-3.5 h-3.5 text-replit-orange" />
+              <span>Video Call</span>
+              {isWebRtcCallActive && (
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
               )}
             </button>
 
@@ -370,115 +394,125 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
               socket={socket}
             />
 
-            <AiAssistantPanel
-              roomId={room.id}
-              language={room.language}
-              role={currentRole}
-              codeGetter={codeGetter}
-              socket={socket}
-            />
+            {/* AI Pair Programmer Panel (Appears BELOW Output Console when activated) */}
+            {isAiPanelOpen && (
+              <AiAssistantPanel
+                roomId={room.id}
+                language={room.language}
+                role={currentRole}
+                codeGetter={codeGetter}
+                socket={socket}
+                onClose={() => setIsAiPanelOpen(false)}
+              />
+            )}
           </div>
 
           {/* Room Info & Member List Sidebar */}
           <div className="space-y-6">
             {/* Room Metadata Card */}
             <div className="card-replit p-5 space-y-3">
-              <div className="flex items-center gap-2 text-replit-orange pb-2 border-b border-border-subtle">
-                <Info className="w-4 h-4" />
-                <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">
-                  Room Info
-                </h3>
+              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+                <div className="flex items-center gap-2 font-bold text-white text-sm">
+                  <Info className="w-4 h-4 text-replit-orange" />
+                  <span>Room Information</span>
+                </div>
+                <span className="px-2 py-0.5 rounded bg-replit-orange/10 text-replit-orange border border-replit-orange/20 text-xs font-mono font-semibold uppercase">
+                  {currentRole}
+                </span>
               </div>
 
-              <div className="space-y-2 text-xs font-mono">
-                <div>
-                  <span className="text-[11px] text-text-muted block">ROOM ID</span>
-                  <span className="text-white text-[11px] break-all">{room.id}</span>
+              <div className="space-y-2 text-xs font-mono text-text-muted">
+                <div className="flex justify-between">
+                  <span>Room ID:</span>
+                  <span className="text-white font-mono">{room.id.slice(0, 8)}...</span>
                 </div>
-                <div>
-                  <span className="text-[11px] text-text-muted block">YOUR ROLE</span>
-                  <span className="inline-block px-2 py-0.5 rounded bg-replit-orange/20 text-replit-orange font-semibold mt-0.5">
-                    {currentRole}
-                  </span>
+                <div className="flex justify-between">
+                  <span>Language:</span>
+                  <span className="text-white capitalize">{room.language}</span>
                 </div>
-                <div>
-                  <span className="text-[11px] text-text-muted block">CREATED AT</span>
-                  <span className="text-text-muted text-[11px] flex items-center gap-1 mt-0.5">
+                <div className="flex justify-between">
+                  <span>Created:</span>
+                  <span className="text-white flex items-center gap-1">
                     <Clock className="w-3 h-3 text-text-muted" />
-                    {new Date(room.createdAt).toLocaleString()}
+                    {new Date(room.createdAt).toLocaleDateString()}
                   </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Total Members:</span>
+                  <span className="text-white font-bold">{room.members?.length || 1}</span>
                 </div>
               </div>
             </div>
 
-            {/* Members List Card */}
+            {/* Members List & Role Management Card */}
             <div className="card-replit p-5 space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
-                <div className="flex items-center gap-2 text-replit-orange">
-                  <Users className="w-4 h-4" />
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">
-                    Members ({room.members?.length || 0})
-                  </h3>
+              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
+                <div className="flex items-center gap-2 font-bold text-white text-sm">
+                  <Users className="w-4 h-4 text-replit-orange" />
+                  <span>Members ({room.members?.length || 0})</span>
                 </div>
               </div>
 
-              <div className="space-y-2.5">
-                {room.members?.map((m) => {
-                  const isOnline = presenceUsers.some((p) => p.userId === m.userId);
+              <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
+                {room.members?.map((member) => {
+                  const isSelf = member.userId === user.id;
+                  const isMemberOwner = member.role === 'OWNER';
+
                   return (
                     <div
-                      key={m.id}
-                      className="flex items-center justify-between p-2.5 rounded bg-bg-secondary/60 border border-border-subtle text-xs"
+                      key={member.id}
+                      className="p-2.5 rounded bg-bg-secondary border border-border-subtle flex items-center justify-between gap-2"
                     >
-                      <div className="flex items-center gap-2.5 overflow-hidden">
-                        <div className="relative shrink-0">
-                          <div className="w-7 h-7 rounded bg-replit-orange/20 border border-replit-orange/30 text-replit-orange font-mono font-bold flex items-center justify-center text-xs">
-                            {m.user.name.charAt(0).toUpperCase()}
-                          </div>
-                          {isOnline && (
-                            <div className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-400 border-2 border-bg-main" />
-                          )}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-7 h-7 rounded-full bg-replit-orange/20 border border-replit-orange/30 text-replit-orange font-bold text-xs flex items-center justify-center font-mono shrink-0">
+                          {member.user?.name?.charAt(0).toUpperCase() || 'U'}
                         </div>
-                        <div className="truncate">
-                          <span className="text-white font-medium block truncate">{m.user.name}</span>
-                          <span className="text-[10px] text-text-muted font-mono block truncate">
-                            {m.user.email}
-                          </span>
+
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-white truncate flex items-center gap-1.5">
+                            <span className="truncate">{member.user?.name}</span>
+                            {isSelf && (
+                              <span className="text-[10px] text-text-muted font-normal font-mono">(You)</span>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-text-muted truncate font-mono">
+                            {member.user?.email}
+                          </div>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2 shrink-0">
-                        {/* Role Badge / Owner Selector */}
-                        {isOwner && m.userId !== user.id ? (
-                          <div className="relative">
-                            <select
-                              value={m.role}
-                              disabled={updatingMemberId === m.userId}
-                              onChange={(e) => handleRoleChange(m.userId, e.target.value)}
-                              className="px-2 py-0.5 rounded bg-bg-surface text-text-main border border-border-subtle text-[10px] font-mono font-semibold focus:outline-none focus:border-replit-orange transition-colors cursor-pointer disabled:opacity-50"
-                            >
-                              <option value="PARTICIPANT">PARTICIPANT</option>
-                              <option value="VIEWER">VIEWER</option>
-                            </select>
-                          </div>
+                        {/* Role Selector (Owner Only) */}
+                        {isOwner && !isMemberOwner && !isSelf ? (
+                          <select
+                            value={member.role}
+                            disabled={updatingMemberId === member.userId}
+                            onChange={(e) => handleRoleChange(member.userId, e.target.value)}
+                            className="bg-bg-surface border border-border-subtle rounded text-[11px] font-mono text-white px-2 py-1 focus:outline-none focus:border-replit-orange cursor-pointer"
+                          >
+                            <option value="PARTICIPANT">PARTICIPANT</option>
+                            <option value="VIEWER">VIEWER</option>
+                          </select>
                         ) : (
                           <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold ${
-                              m.role === 'OWNER'
-                                ? 'bg-replit-orange/20 text-replit-orange'
-                                : 'bg-bg-surface text-text-muted border border-border-subtle'
+                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
+                              isMemberOwner
+                                ? 'bg-replit-orange text-white'
+                                : member.role === 'VIEWER'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
                             }`}
                           >
-                            {m.role}
+                            {member.role}
                           </span>
                         )}
 
-                        {/* Remove Member Button (Owner Only, Cannot Remove Self) */}
-                        {isOwner && m.userId !== user.id && (
+                        {/* Kick Member Button (Owner Only) */}
+                        {isOwner && !isMemberOwner && !isSelf && (
                           <button
-                            onClick={() => handleRemoveMember(m.userId, m.user.name)}
-                            className="p-1 rounded text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors"
-                            title="Remove member"
+                            onClick={() => handleRemoveMember(member.userId, member.user?.name || 'User')}
+                            className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-bg-surface transition-colors"
+                            title="Remove Member"
                           >
                             <UserX className="w-3.5 h-3.5" />
                           </button>
@@ -490,19 +524,42 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
               </div>
             </div>
 
-            {/* Room Workspace (Chat + Online Members) Card */}
-            <RoomChatPanel
-              roomId={room.id}
-              user={{ id: user.id, name: user.name }}
-              socket={socket}
-              isOpen={true}
-              onClose={() => {}}
-              onUnreadCountChange={(count) => setUnreadCount(count)}
-              presenceUsers={presenceUsers}
-            />
+            {/* Room Workspace Card (Repositioned Chat & Online Members) */}
+            <div className="card-replit p-4">
+              <RoomChatPanel
+                roomId={room.id}
+                user={{ id: user.id, name: user.name }}
+                presenceUsers={presenceUsers}
+                socket={socket}
+                isOpen={isChatOpen}
+                onClose={() => setIsChatOpen(false)}
+                onUnreadCountChange={(count: number) => setUnreadCount(count)}
+              />
+            </div>
           </div>
         </div>
       </main>
+
+      {/* Bottom-Right Floating AI Pair Programmer Button */}
+      <button
+        onClick={() => setIsAiPanelOpen((prev) => !prev)}
+        className="fixed bottom-6 right-6 z-40 w-13 h-13 rounded-full bg-[#1c1f2b] border-2 border-replit-orange text-replit-orange hover:bg-replit-orange hover:text-white shadow-2xl transition-all duration-200 flex items-center justify-center group active:scale-95"
+        title="AI Pair Programmer"
+        aria-label="Toggle AI Pair Programmer Panel"
+      >
+        <Sparkles className="w-6 h-6 animate-pulse group-hover:animate-none" />
+      </button>
+
+      {/* WebRTC Video Call Floating Modal */}
+      <RoomVideoPanel
+        isOpen={isVideoModalOpen}
+        onClose={() => setIsVideoModalOpen(false)}
+        roomId={room.id}
+        user={{ id: user.id, name: user.name }}
+        role={currentRole}
+        socket={socket}
+        onCallStateChange={(active) => setIsWebRtcCallActive(active)}
+      />
     </div>
   );
 }
