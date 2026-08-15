@@ -19,6 +19,7 @@ interface RealtimeEditorProps {
   };
   onSocketInit?: (socket: Socket) => void;
   onPresenceUpdate?: (users: RoomPresenceUserDto[]) => void;
+  onCodeGetterInit?: (codeGetter: () => string) => void;
 }
 
 export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
@@ -28,6 +29,7 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
   user,
   onSocketInit,
   onPresenceUpdate,
+  onCodeGetterInit,
 }) => {
   const editorRef = useRef<any>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -74,6 +76,10 @@ export const RealtimeEditor: React.FC<RealtimeEditorProps> = ({
   const handleEditorDidMount: OnMount = useCallback(
     (editor) => {
       editorRef.current = editor;
+
+      if (onCodeGetterInit) {
+        onCodeGetterInit(() => editor.getValue());
+      }
 
       // Initialize Monaco Editor Options with current isReadOnly state
       editor.updateOptions({

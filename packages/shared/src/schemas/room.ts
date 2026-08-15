@@ -33,3 +33,14 @@ export const sendChatMessageSchema = z.object({
 });
 
 export type SendChatMessageInput = z.infer<typeof sendChatMessageSchema>;
+
+export const executeCodeSchema = z.object({
+  roomId: z.string({ required_error: 'Room ID is required' }).uuid('Invalid room ID'),
+  language: z.enum(['javascript', 'python', 'cpp', 'java', 'typescript'], {
+    required_error: 'Language selection is required',
+    invalid_type_error: 'Supported languages are javascript, python, cpp, java, typescript',
+  }),
+  code: z.string().max(50000, 'Code payload exceeds 50KB maximum limit').optional(),
+});
+
+export type ExecuteCodeInput = z.infer<typeof executeCodeSchema>;

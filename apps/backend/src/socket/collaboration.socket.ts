@@ -21,7 +21,14 @@ export interface AuthenticatedSocket extends Socket {
   };
 }
 
+let ioInstance: Server | null = null;
+
+export function getIoInstance(): Server | null {
+  return ioInstance;
+}
+
 export function setupCollaborationSockets(io: Server) {
+  ioInstance = io;
   // Socket Authentication Middleware
   io.use(async (socket: AuthenticatedSocket, next) => {
     try {

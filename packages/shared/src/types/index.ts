@@ -72,3 +72,25 @@ export interface RoomPresenceUserDto {
   role: RoomRole;
   socketCount: number;
 }
+
+export interface CodeExecutionResultDto {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  compileError?: string | null;
+  runtimeError?: string | null;
+  executionTimeMs: number;
+  timedOut: boolean;
+}
+
+export interface RoomExecutionResultDto extends CodeExecutionResultDto {
+  roomId: string;
+  executionId: string;
+  executedBy: {
+    userId: string;
+    name: string;
+    role: RoomRole;
+  };
+  language: string;
+  timestamp: string;
+}

@@ -8,6 +8,7 @@ import { useAuth } from '../../context/auth-context';
 import { RoomDto, RoomPresenceUserDto } from '@codesync/shared';
 import { Socket } from 'socket.io-client';
 import { RoomChatPanel } from '../../../components/chat/room-chat-panel';
+import { ExecutionConsole } from '../../../components/editor/execution-console';
 import {
   Code2,
   Copy,
@@ -56,11 +57,12 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
 
-  // Real-Time Socket.IO, Chat & Presence State
+  // Real-Time Socket.IO, Chat, Presence & Execution State
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
-  const [unreadCount, setUnreadCount] = useState<number>(0);
   const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUserDto[]>([]);
+  const [codeGetter, setCodeGetter] = useState<(() => string) | undefined>(undefined);
+  const [unreadCount, setUnreadCount] = useState<number>(0);
 
   const fetchRoomDetails = useCallback(async () => {
     try {
@@ -347,8 +349,8 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
       <main className="max-w-7xl mx-auto px-4 py-6 flex-1 w-full flex gap-6 overflow-hidden">
         {/* Main Grid: Editor + Room Info Sidebar */}
         <div className="flex-1 grid md:grid-cols-3 gap-6 min-h-[500px]">
-          {/* Real-Time Monaco Editor + Yjs Collaborative Workspace Container */}
-          <div className="md:col-span-2 flex flex-col min-h-[500px]">
+          {/* Real-Time Monaco Editor + Execution Console Container */}
+          <div className="md:col-span-2 flex flex-col space-y-4 min-h-[500px]">
             <RealtimeEditor
               roomId={room.id}
               language={room.language}
@@ -356,6 +358,15 @@ export default function RoomWorkspacePage({ params }: { params: Promise<{ roomId
               user={{ id: user.id, name: user.name }}
               onSocketInit={(s) => setSocket(s)}
               onPresenceUpdate={(users) => setPresenceUsers(users)}
+              onCodeGetterInit={(getter) => setCodeGetter(() => getter)}
+            />
+
+            <ExecutionConsole
+              roomId={room.id}
+              language={room.language}
+              role={currentRole}
+              codeGetter={codeGetter}
+              socket={socket}
             />
           </div>
 

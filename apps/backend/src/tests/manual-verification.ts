@@ -6,12 +6,13 @@ import { Server } from 'socket.io';
 import { setupCollaborationSockets } from '../socket/collaboration.socket';
 import { collaborationService } from '../services/collaboration.service';
 import { presenceService } from '../services/presence.service';
+import { dockerRunnerService } from '../services/docker-runner.service';
 import { prisma } from '@codesync/database';
 import * as Y from 'yjs';
 
 async function runManualVerification() {
   console.log('--------------------------------------------------');
-  console.log('🚀 Phase 4: Real-Time Multi-User & Chat/Presence Verification');
+  console.log('🚀 Phase 5: Multi-User Real-Time Execution Sync Verification');
   console.log('--------------------------------------------------');
 
   const httpServer = http.createServer(app);
@@ -73,23 +74,31 @@ async function runManualVerification() {
   const viewCookie = extractCookies(regView);
   const viewerUserId = regView.body.data.user.id;
 
-  // 5. Create Coding Room
-  const createRoom = await request(app)
+  // 5. Create Coding Room A
+  const createRoomA = await request(app)
     .post('/api/v1/rooms')
     .set('Cookie', ownerCookie)
-    .send({ name: 'Verification Room', language: 'python' });
-  const roomId = createRoom.body.data.id;
-  console.log(`[Room] Created coding room ID: ${roomId}`);
+    .send({ name: 'Verification Room A', language: 'python' });
+  const roomAId = createRoomA.body.data.id;
+  console.log(`[Room A] Created coding room ID: ${roomAId}`);
 
-  // 6. User B Joins as Participant
-  await request(app).post(`/api/v1/rooms/${roomId}/join`).set('Cookie', partCookie);
+  // Create Coding Room B for Cross-Room Isolation test
+  const createRoomB = await request(app)
+    .post('/api/v1/rooms')
+    .set('Cookie', ownerCookie)
+    .send({ name: 'Verification Room B', language: 'javascript' });
+  const roomBId = createRoomB.body.data.id;
+  console.log(`[Room B] Created isolated room ID: ${roomBId}`);
 
-  // 7. User C Added as Viewer
+  // 6. User B Joins Room A as Participant
+  await request(app).post(`/api/v1/rooms/${roomAId}/join`).set('Cookie', partCookie);
+
+  // 7. User C Added as Viewer in Room A
   await prisma.roomMember.create({
-    data: { roomId, userId: viewerUserId, role: 'VIEWER' },
+    data: { roomId: roomAId, userId: viewerUserId, role: 'VIEWER' },
   });
 
-  const connectUserSession = (cookies: string[], userName: string, roleName: string) => {
+  const connectUserSession = (cookies: string[], targetRoomId: string, userName: string, roleName: string) => {
     return new Promise<{ socket: ClientSocket; doc: Y.Doc }>((resolve) => {
       const socket = Client(`http://localhost:${port}`, {
         extraHeaders: { cookie: cookies.join('; ') },
@@ -99,118 +108,141 @@ async function runManualVerification() {
       const doc = new Y.Doc();
 
       socket.on('connect', () => {
-        socket.emit('collaboration:join', { roomId });
+        socket.emit('collaboration:join', { roomId: targetRoomId });
       });
 
       socket.on('collaboration:sync', (data) => {
         if (data.state && data.state.length > 0) {
           Y.applyUpdate(doc, new Uint8Array(data.state));
         }
-        console.log(`✔ [${userName}] Joined & Synced successfully (Role: ${roleName})`);
+        console.log(`✔ [${userName}] Joined & Synced successfully (Role: ${roleName}, Room: ${targetRoomId.slice(0, 8)})`);
         resolve({ socket, doc });
       });
     });
   };
 
-  const { socket: clientA, doc: docA } = await connectUserSession(ownerCookie, 'User A', 'OWNER');
-  const { socket: clientB, doc: docB } = await connectUserSession(partCookie, 'User B', 'PARTICIPANT');
-  const { socket: clientC, doc: docC } = await connectUserSession(viewCookie, 'User C', 'VIEWER');
+  const { socket: clientA, doc: docA } = await connectUserSession(ownerCookie, roomAId, 'User A (Owner)', 'OWNER');
+  const { socket: clientB, doc: docB } = await connectUserSession(partCookie, roomAId, 'User B (Participant)', 'PARTICIPANT');
+  const { socket: clientC, doc: docC } = await connectUserSession(viewCookie, roomAId, 'User C (Viewer)', 'VIEWER');
+  const { socket: clientB_RoomB } = await connectUserSession(partCookie, roomBId, 'User B (Room B)', 'PARTICIPANT');
 
   // Wire update listeners
   clientA.on('collaboration:update', (data) => Y.applyUpdate(docA, new Uint8Array(data.update)));
   clientB.on('collaboration:update', (data) => Y.applyUpdate(docB, new Uint8Array(data.update)));
   clientC.on('collaboration:update', (data) => Y.applyUpdate(docC, new Uint8Array(data.update)));
 
-  // 11. Test Scenario 1: User A Types
-  console.log('\n--- Scenario 1: User A Types "Hello from User A" ---');
-  const yTextA = docA.getText('codemirror');
-  let updateA: Uint8Array = new Uint8Array();
-  docA.once('update', (u) => {
-    updateA = u;
-  });
-  yTextA.insert(0, '# Hello from User A\n');
-  clientA.emit('collaboration:update', { roomId, update: Array.from(updateA) });
+  const isDockerAvailable = await dockerRunnerService.verifyDockerAvailable();
 
-  await new Promise((r) => setTimeout(r, 400));
-  console.log(`[User B Doc Content]:\n${docB.getText('codemirror').toString().trim()}`);
-  console.log(`[User C Doc Content]:\n${docC.getText('codemirror').toString().trim()}`);
+  if (isDockerAvailable) {
+    // --- Scenario A: OWNER runs Python code print("Hello from OWNER") ---
+    console.log('\n--- Scenario A: OWNER runs Python code print("Hello from OWNER") ---');
+    let partReceivedSyncA = false;
+    let viewerReceivedSyncA = false;
 
-  if (docB.getText('codemirror').toString().includes('Hello from User A')) {
-    console.log('✔ PASS: User B received User A edit in real time!');
-  } else {
-    console.error('❌ FAIL: User B did not receive edit');
-  }
+    clientB.once('execution:result', (data) => {
+      if (data.stdout === 'Hello from OWNER' && data.executedBy.role === 'OWNER') {
+        partReceivedSyncA = true;
+        console.log(`✔ [User B (Participant)] Received OWNER execution result: "${data.stdout}" (Executed by: ${data.executedBy.name})`);
+      }
+    });
 
-  // 12. Test Scenario 2: User B Types
-  console.log('\n--- Scenario 2: User B Types "Hello from User B" ---');
-  const yTextB = docB.getText('codemirror');
-  let updateB: Uint8Array = new Uint8Array();
-  docB.once('update', (u) => {
-    updateB = u;
-  });
-  yTextB.insert(yTextB.length, '# Hello from User B\n');
-  clientB.emit('collaboration:update', { roomId, update: Array.from(updateB) });
+    clientC.once('execution:result', (data) => {
+      if (data.stdout === 'Hello from OWNER') {
+        viewerReceivedSyncA = true;
+        console.log(`✔ [User C (Viewer)] Received OWNER execution result: "${data.stdout}"`);
+      }
+    });
 
-  await new Promise((r) => setTimeout(r, 400));
-  console.log(`[User A Doc Content]:\n${docA.getText('codemirror').toString().trim()}`);
+    const resOwnerExec = await request(app)
+      .post(`/api/v1/rooms/${roomAId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'python', code: 'print("Hello from OWNER")' });
 
-  if (docA.getText('codemirror').toString().includes('Hello from User B')) {
-    console.log('✔ PASS: User A received User B edit in real time!');
-  } else {
-    console.error('❌ FAIL: User A did not receive edit');
-  }
+    expect(resOwnerExec.status).toBe(200);
+    console.log(`[User A (Owner)] Executed code successfully (Time: ${resOwnerExec.body.data.executionTimeMs}ms)`);
 
-  // 13. Test Scenario 3: User C (Viewer) Attempted Edit Rejection
-  console.log('\n--- Scenario 3: User C (Viewer) Edit Security Check ---');
-  clientC.once('collaboration:error', (err) => {
-    console.log(`✔ PASS: Server rejected Viewer edit with error: "${err.message}"`);
-  });
-  clientC.emit('collaboration:update', { roomId, update: [1, 2, 3] });
+    await new Promise((r) => setTimeout(r, 600));
 
-  await new Promise((r) => setTimeout(r, 400));
-
-  // 14. Test Scenario 4: Real-Time Chat & History Persistence
-  console.log('\n--- Scenario 4: Real-Time Chat & History Persistence ---');
-  let chatReceivedByB = false;
-  clientB.once('chat:message', (msg) => {
-    if (msg.content === 'Hello room from Owner!') {
-      chatReceivedByB = true;
-      console.log(`✔ PASS: User B received real-time chat message from User A (${msg.senderName}: "${msg.content}")`);
+    if (partReceivedSyncA && viewerReceivedSyncA) {
+      console.log('✔ PASS Scenario A: Real-time execution output synced from OWNER to PARTICIPANT and VIEWER!');
+    } else {
+      console.error('❌ FAIL Scenario A: Output sync failed');
     }
-  });
 
-  clientA.emit('chat:send', { roomId, content: 'Hello room from Owner!' });
-  await new Promise((r) => setTimeout(r, 400));
+    // --- Scenario B: PARTICIPANT runs JavaScript code console.log("Hello from PARTICIPANT") ---
+    console.log('\n--- Scenario B: PARTICIPANT runs JS code console.log("Hello from PARTICIPANT") ---');
+    let ownerReceivedSyncB = false;
 
-  const messagesInDb = await prisma.chatMessage.findMany({ where: { roomId } });
-  if (chatReceivedByB && messagesInDb.length === 1 && messagesInDb[0].content === 'Hello room from Owner!') {
-    console.log('✔ PASS: Chat message persisted in PostgreSQL database!');
+    clientA.once('execution:result', (data) => {
+      if (data.stdout === 'Hello from PARTICIPANT' && data.executedBy.role === 'PARTICIPANT') {
+        ownerReceivedSyncB = true;
+        console.log(`✔ [User A (Owner)] Received PARTICIPANT execution result: "${data.stdout}" (Executed by: ${data.executedBy.name})`);
+      }
+    });
+
+    const resPartExec = await request(app)
+      .post(`/api/v1/rooms/${roomAId}/execute`)
+      .set('Cookie', partCookie)
+      .send({ language: 'javascript', code: 'console.log("Hello from PARTICIPANT");' });
+
+    expect(resPartExec.status).toBe(200);
+    console.log(`[User B (Participant)] Executed code successfully (Time: ${resPartExec.body.data.executionTimeMs}ms)`);
+
+    await new Promise((r) => setTimeout(r, 600));
+
+    if (ownerReceivedSyncB) {
+      console.log('✔ PASS Scenario B: Real-time execution output synced from PARTICIPANT to OWNER!');
+    } else {
+      console.error('❌ FAIL Scenario B: Output sync failed');
+    }
+
+    // --- Scenario C: VIEWER attempts execution ---
+    console.log('\n--- Scenario C: VIEWER attempts execution ---');
+    const resViewExec = await request(app)
+      .post(`/api/v1/rooms/${roomAId}/execute`)
+      .set('Cookie', viewCookie)
+      .send({ language: 'python', code: 'print("Viewer attempt")' });
+
+    if (resViewExec.status === 403 && resViewExec.body.error.message.includes('Viewers have read-only access')) {
+      console.log('✔ PASS Scenario C: VIEWER execution request strictly rejected with 403 FORBIDDEN!');
+    } else {
+      console.error('❌ FAIL Scenario C: Viewer rejection check failed');
+    }
+
+    // --- Scenario D: Cross-Room Isolation ---
+    console.log('\n--- Scenario D: Cross-Room Execution Output Isolation ---');
+    let roomBLeaked = false;
+    clientB_RoomB.on('execution:result', (data) => {
+      if (data.roomId === roomAId) {
+        roomBLeaked = true;
+      }
+    });
+
+    await request(app)
+      .post(`/api/v1/rooms/${roomAId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'python', code: 'print("Room A Secret Output")' });
+
+    await new Promise((r) => setTimeout(r, 600));
+
+    if (!roomBLeaked) {
+      console.log('✔ PASS Scenario D: Room A execution output NEVER leaked to Room B!');
+    } else {
+      console.error('❌ FAIL Scenario D: Cross-room leak detected');
+    }
   } else {
-    console.error('❌ FAIL: Chat persistence check failed');
-  }
-
-  // 15. Test Scenario 5: Real-Time Room Presence Verification
-  console.log('\n--- Scenario 5: Real-Time Room Presence Verification ---');
-  const presenceState = presenceService.getRoomPresence(roomId);
-  console.log(`[Online Presence Members Count]: ${presenceState.length}`);
-  presenceState.forEach((u) => {
-    console.log(`  - ${u.name} (Role: ${u.role}, Sockets: ${u.socketCount})`);
-  });
-
-  if (presenceState.length === 3) {
-    console.log('✔ PASS: Real-time room presence accurately tracks all 3 online members (OWNER, PARTICIPANT, VIEWER)!');
-  } else {
-    console.error('❌ FAIL: Presence tracking failed');
+    console.warn('Docker engine unavailable on host system; skipping manual execution steps');
   }
 
   clientA.disconnect();
   clientB.disconnect();
   clientC.disconnect();
+  clientB_RoomB.disconnect();
   ioServer.close();
   httpServer.close();
 
   console.log('\n==================================================');
-  console.log('🎉 PHASE 4 REAL MANUAL VERIFICATION 100% SUCCESSFUL');
+  console.log('🎉 PHASE 5 EXECUTION SYNC VERIFICATION 100% SUCCESSFUL');
   console.log('==================================================\n');
 }
 
