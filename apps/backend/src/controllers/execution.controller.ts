@@ -10,7 +10,13 @@ export class ExecutionController {
       const userId = req.user!.userId;
       const { language, code } = req.body || {};
 
-      const result = await executionService.runRoomCode(roomId, userId, language, code);
+      const result = await executionService.runRoomCode(
+        roomId,
+        userId,
+        language,
+        code,
+        req.candidateInterview?.roomId
+      );
 
       res.status(200).json({
         success: true,

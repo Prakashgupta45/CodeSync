@@ -2,6 +2,7 @@ import { Response, NextFunction } from 'express';
 import { roomService } from '../services/room.service';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { ApiResponse, RoomDto, RoomMemberDto } from '@codesync/shared';
+import { emitRoomMembersUpdated, syncRoomMemberRole } from '../socket/collaboration.socket';
 
 export class RoomController {
   public create = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
@@ -65,6 +66,8 @@ export class RoomController {
       const roomId = String(req.params.roomId);
 
       const room = await roomService.joinRoom(roomId, userId);
+
+      emitRoomMembersUpdated(roomId, { action: 'joined', userId, roomId });
 
       const response: ApiResponse<RoomDto> = {
         success: true,
@@ -140,6 +143,8 @@ export class RoomController {
 
       await roomService.removeMember(roomId, ownerUserId, memberUserId);
 
+      emitRoomMembersUpdated(roomId, { action: 'removed', userId: memberUserId, roomId });
+
       const response: ApiResponse = {
         success: true,
         message: 'Member removed successfully',
@@ -160,10 +165,34 @@ export class RoomController {
 
       const updatedMember = await roomService.updateMemberRole(roomId, ownerUserId, memberUserId, role);
 
+      if (updatedMember.role === 'PARTICIPANT' || updatedMember.role === 'VIEWER') {
+        syncRoomMemberRole(roomId, memberUserId, updatedMember.role, updatedMember);
+      }
+
       const response: ApiResponse<RoomMemberDto> = {
         success: true,
         message: 'Member role updated successfully',
         data: updatedMember,
+      };
+
+      res.status(200).json(response);
+    } catch (error) {
+      next(error);
+    }
+  };
+
+  public updateLanguage = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const userId = req.user!.userId;
+      const roomId = String(req.params.roomId);
+      const { language } = req.body;
+
+      const room = await roomService.updateRoomLanguage(roomId, userId, language);
+
+      const response: ApiResponse<RoomDto> = {
+        success: true,
+        message: 'Room language updated successfully',
+        data: room,
       };
 
       res.status(200).json(response);

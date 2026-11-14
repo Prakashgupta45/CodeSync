@@ -11,13 +11,17 @@ export class AiController {
       const userId = req.user!.userId;
       const { action = 'CHAT', prompt, code, errorContext } = req.body || {};
 
+      const clientSignal = (req as any).signal as AbortSignal | undefined;
+
       const result = await aiService.promptAi(
         roomId,
         userId,
         action as AiActionType,
         prompt,
         code,
-        errorContext
+        errorContext,
+        req.candidateInterview?.roomId,
+        clientSignal
       );
 
       res.status(200).json({
@@ -36,7 +40,11 @@ export class AiController {
       const roomId = Array.isArray(roomIdParam) ? roomIdParam[0] : roomIdParam;
       const userId = req.user!.userId;
 
-      const history = await aiService.getRoomAiHistory(roomId, userId);
+      const history = await aiService.getRoomAiHistory(
+        roomId,
+        userId,
+        req.candidateInterview?.roomId
+      );
 
       res.status(200).json({
         success: true,

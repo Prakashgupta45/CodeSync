@@ -16,6 +16,7 @@ import {
   User,
   Bot,
   X,
+  CornerDownLeft,
 } from 'lucide-react';
 import { AiMessageDto, AiActionType } from '@codesync/shared';
 import { Socket } from 'socket.io-client';
@@ -91,7 +92,7 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
   // Auto-scroll to bottom of conversation
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isGenerating]);
 
   const handleSendPrompt = useCallback(
     async (actionType: AiActionType = 'CHAT', customPrompt?: string) => {
@@ -123,8 +124,8 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
         }
 
         setPrompt('');
-      } catch (err: any) {
-        setError(err.message || 'Failed to generate AI response');
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'Failed to generate AI response');
         setIsGenerating(false);
       }
     },
@@ -137,45 +138,86 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (prompt.trim() && !isGenerating) {
+        handleSendPrompt('CHAT');
+      }
+    }
+  };
+
   return (
-    <div className="card-replit flex flex-col w-full h-full min-h-[420px] bg-[#12141a] border border-border-subtle rounded-lg overflow-hidden text-xs font-mono select-none shadow-lg">
-      {/* AI Panel Header */}
-      <div className="px-4 py-2.5 border-b border-border-subtle bg-bg-secondary flex items-center justify-between">
-        <div className="flex items-center gap-2 font-bold text-white">
-          <Sparkles className="w-4 h-4 text-replit-orange animate-pulse" />
-          <span>AI Pair Programmer</span>
-          <span className="text-[10px] text-replit-orange bg-replit-orange/10 px-1.5 py-0.5 rounded uppercase font-semibold border border-replit-orange/20">
-            {language}
-          </span>
+    <div className="flex flex-col w-full h-full min-h-0 bg-bg-surface border-0 overflow-hidden text-xs">
+      {/* AI Assistant Header */}
+      <div className="px-4 py-3 border-b border-border-subtle bg-bg-surface flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <div className="w-8 h-8 rounded-lg bg-replit-orange/15 border border-replit-orange/30 text-replit-orange flex items-center justify-center font-bold shadow-sm">
+              <Bot className="w-4 h-4" />
+            </div>
+            <span
+              className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-bg-surface ${
+                isGenerating ? 'bg-amber-400 animate-ping' : 'bg-emerald-400'
+              }`}
+            />
+          </div>
+
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="font-bold text-text-main text-xs tracking-tight">CodeSync AI Assistant</h3>
+              <span className="text-[10px] text-text-muted bg-bg-secondary px-1.5 py-0.2 rounded font-mono uppercase font-semibold border border-border-subtle">
+                {language}
+              </span>
+            </div>
+            <p className="text-[11px] text-text-muted">
+              {isGenerating ? (
+                <span className="text-replit-orange flex items-center gap-1 font-mono">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Generating intelligent response...
+                </span>
+              ) : (
+                'Your intelligent coding companion'
+              )}
+            </p>
+          </div>
         </div>
 
-        {onClose && (
-          <button
-            onClick={onClose}
-            className="p-1 rounded text-text-muted hover:text-white hover:bg-bg-surface transition-colors"
-            title="Close AI Pair Programmer Panel"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+            Ready
+          </span>
+
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 rounded-md text-text-muted hover:text-text-main hover:bg-bg-secondary transition-colors"
+              title="Close AI Assistant Panel"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Quick AI Action Toolbar */}
-      <div className="p-2 border-b border-border-subtle bg-[#161922] grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+      {/* Quick AI Actions Toolbar */}
+      <div className="px-3 py-2 border-b border-border-subtle bg-bg-secondary/50 flex flex-wrap gap-1.5 shrink-0">
         <button
           onClick={() => {
             setActiveAction('EXPLAIN');
             handleSendPrompt('EXPLAIN');
           }}
           disabled={isGenerating || isReadOnlyViewer}
-          className={`px-2 py-1.5 rounded flex items-center justify-center gap-1 text-[11px] font-medium transition-all ${
+          className={`px-2.5 py-1.5 rounded-md flex items-center gap-1.5 text-[11px] font-medium transition-all ${
             activeAction === 'EXPLAIN'
               ? 'bg-replit-orange text-white shadow-sm'
-              : 'bg-bg-surface text-text-muted hover:text-white hover:bg-bg-secondary'
+              : 'bg-bg-surface text-text-muted hover:text-text-main hover:bg-bg-secondary border border-border-subtle'
           }`}
+          title="Explain current code logic"
         >
           <Code2 className="w-3.5 h-3.5" />
-          <span>Explain</span>
+          <span>Explain Code</span>
         </button>
 
         <button
@@ -184,14 +226,15 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
             handleSendPrompt('DEBUG');
           }}
           disabled={isGenerating || isReadOnlyViewer}
-          className={`px-2 py-1.5 rounded flex items-center justify-center gap-1 text-[11px] font-medium transition-all ${
+          className={`px-2.5 py-1.5 rounded-md flex items-center gap-1.5 text-[11px] font-medium transition-all ${
             activeAction === 'DEBUG'
               ? 'bg-red-500 text-white shadow-sm'
-              : 'bg-bg-surface text-text-muted hover:text-white hover:bg-bg-secondary'
+              : 'bg-bg-surface text-text-muted hover:text-text-main hover:bg-bg-secondary border border-border-subtle'
           }`}
+          title="Debug runtime or compilation error"
         >
           <Bug className="w-3.5 h-3.5" />
-          <span>Debug</span>
+          <span>Debug Error</span>
         </button>
 
         <button
@@ -200,14 +243,15 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
             handleSendPrompt('REFACTOR');
           }}
           disabled={isGenerating || isReadOnlyViewer}
-          className={`px-2 py-1.5 rounded flex items-center justify-center gap-1 text-[11px] font-medium transition-all ${
+          className={`px-2.5 py-1.5 rounded-md flex items-center gap-1.5 text-[11px] font-medium transition-all ${
             activeAction === 'REFACTOR'
               ? 'bg-emerald-600 text-white shadow-sm'
-              : 'bg-bg-surface text-text-muted hover:text-white hover:bg-bg-secondary'
+              : 'bg-bg-surface text-text-muted hover:text-text-main hover:bg-bg-secondary border border-border-subtle'
           }`}
+          title="Refactor for performance and readability"
         >
           <Zap className="w-3.5 h-3.5" />
-          <span>Refactor</span>
+          <span>Refactor Code</span>
         </button>
 
         <button
@@ -216,44 +260,64 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
             handleSendPrompt('TESTS');
           }}
           disabled={isGenerating || isReadOnlyViewer}
-          className={`px-2 py-1.5 rounded flex items-center justify-center gap-1 text-[11px] font-medium transition-all ${
+          className={`px-2.5 py-1.5 rounded-md flex items-center gap-1.5 text-[11px] font-medium transition-all ${
             activeAction === 'TESTS'
               ? 'bg-purple-600 text-white shadow-sm'
-              : 'bg-bg-surface text-text-muted hover:text-white hover:bg-bg-secondary'
+              : 'bg-bg-surface text-text-muted hover:text-text-main hover:bg-bg-secondary border border-border-subtle'
           }`}
+          title="Generate comprehensive unit test suite"
         >
           <TestTube className="w-3.5 h-3.5" />
-          <span>Tests</span>
+          <span>Generate Tests</span>
         </button>
 
         <button
           onClick={() => setActiveAction('CHAT')}
-          className={`px-2 py-1.5 rounded flex items-center justify-center gap-1 text-[11px] font-medium transition-all col-span-2 sm:col-span-1 ${
+          className={`px-2.5 py-1.5 rounded-md flex items-center gap-1.5 text-[11px] font-medium transition-all ${
             activeAction === 'CHAT'
               ? 'bg-blue-600 text-white shadow-sm'
-              : 'bg-bg-surface text-text-muted hover:text-white hover:bg-bg-secondary'
+              : 'bg-bg-surface text-text-muted hover:text-text-main hover:bg-bg-secondary border border-border-subtle'
           }`}
+          title="Custom interactive AI coding chat"
         >
           <MessageSquare className="w-3.5 h-3.5" />
-          <span>Chat</span>
+          <span>AI Chat</span>
         </button>
       </div>
 
       {/* Messages Conversation Stream */}
-      <div className="flex-1 p-4 bg-[#0d0f14] overflow-y-auto space-y-4 max-h-[380px]">
+      <div className="flex-1 p-4 overflow-y-auto min-h-0 space-y-4 bg-bg-main/50 font-sans">
         {error && (
-          <div className="p-2.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded text-xs">
+          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-md text-xs font-mono">
             {error}
           </div>
         )}
 
         {messages.length === 0 && !isGenerating && (
-          <div className="text-text-muted text-[11px] py-8 text-center space-y-2 select-none">
-            <Bot className="w-8 h-8 mx-auto text-replit-orange opacity-70" />
-            <p className="font-semibold text-white">CodeSync AI Pair Programmer</p>
-            <p className="max-w-xs mx-auto text-text-muted text-[10px] leading-relaxed">
-              Ask coding questions, click <span className="text-replit-orange">Explain</span>, or generate unit tests for your {language} code.
-            </p>
+          <div className="text-text-muted text-xs py-10 text-center space-y-3 select-none">
+            <div className="w-12 h-12 rounded-2xl bg-replit-orange/10 border border-replit-orange/20 text-replit-orange flex items-center justify-center mx-auto shadow-sm">
+              <Sparkles className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="font-bold text-text-main text-sm">CodeSync AI Assistant Ready</p>
+              <p className="max-w-xs mx-auto text-text-muted text-[11px] mt-1 leading-relaxed">
+                Click any action above to evaluate your {language} code, or ask a question below.
+              </p>
+            </div>
+            <div className="flex flex-wrap justify-center gap-1.5 max-w-sm mx-auto pt-2">
+              <button
+                onClick={() => handleSendPrompt('EXPLAIN')}
+                className="px-2.5 py-1 rounded bg-bg-surface hover:bg-bg-secondary border border-border-subtle text-[11px] text-text-muted hover:text-text-main transition-colors"
+              >
+                💡 Explain Current Code
+              </button>
+              <button
+                onClick={() => handleSendPrompt('TESTS')}
+                className="px-2.5 py-1 rounded bg-bg-surface hover:bg-bg-secondary border border-border-subtle text-[11px] text-text-muted hover:text-text-main transition-colors"
+              >
+                🧪 Generate Unit Tests
+              </button>
+            </div>
           </div>
         )}
 
@@ -261,28 +325,34 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
           <div key={msg.id} className="space-y-2">
             {/* User Prompt Box */}
             <div className="flex items-start gap-2 justify-end">
-              <div className="bg-bg-secondary border border-border-subtle p-2.5 rounded-lg max-w-[85%] text-xs text-white">
-                <div className="flex items-center gap-1.5 text-[10px] text-text-muted mb-1 pb-1 border-b border-border-subtle">
+              <div className="bg-bg-secondary border border-border-subtle p-3 rounded-lg max-w-[85%] text-xs shadow-sm">
+                <div className="flex items-center gap-1.5 text-[10px] text-text-muted mb-1 pb-1 border-b border-border-subtle/60">
                   <User className="w-3 h-3 text-replit-orange" />
-                  <span className="font-semibold text-white">Prompted by {msg.userName} ({msg.userRole.toLowerCase()})</span>
+                  <span className="font-semibold text-text-main">
+                    {msg.userName} ({msg.userRole.toLowerCase()})
+                  </span>
                 </div>
-                <p className="whitespace-pre-wrap">{msg.prompt}</p>
+                <p className="whitespace-pre-wrap break-words max-w-full text-text-main leading-relaxed font-sans">{msg.prompt}</p>
               </div>
             </div>
 
             {/* AI Response Box */}
-            <div className="flex items-start gap-2">
-              <div className="bg-[#161922] border border-border-subtle p-3 rounded-lg max-w-[95%] text-xs text-text-main space-y-2 w-full">
-                <div className="flex items-center justify-between pb-1.5 border-b border-border-subtle text-[11px]">
+            <div className="flex items-start gap-2.5">
+              <div className="w-7 h-7 rounded-md bg-replit-orange/15 border border-replit-orange/30 text-replit-orange flex items-center justify-center font-bold shrink-0 mt-1">
+                <Bot className="w-3.5 h-3.5" />
+              </div>
+
+              <div className="bg-bg-surface border border-border-subtle p-3.5 rounded-lg max-w-[92%] text-xs space-y-2.5 w-full shadow-sm">
+                <div className="flex items-center justify-between pb-2 border-b border-border-subtle text-[11px]">
                   <div className="flex items-center gap-1.5 font-bold text-replit-orange">
-                    <Bot className="w-3.5 h-3.5" />
-                    <span>AI Assistant ({msg.action})</span>
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>CodeSync AI ({msg.action})</span>
                   </div>
 
                   <button
                     onClick={() => handleCopyCode(msg.response, msg.id)}
-                    className="p-1 text-text-muted hover:text-white rounded hover:bg-bg-surface flex items-center gap-1 text-[10px]"
-                    title="Copy Response"
+                    className="p-1 text-text-muted hover:text-text-main rounded hover:bg-bg-secondary flex items-center gap-1 text-[10px] font-mono transition-colors"
+                    title="Copy AI Response"
                   >
                     {copiedId === msg.id ? (
                       <>
@@ -296,7 +366,7 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
                   </button>
                 </div>
 
-                <div className="whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-slate-200">
+                <div className="whitespace-pre-wrap break-words max-w-full font-mono text-[11px] leading-relaxed text-text-main overflow-x-auto bg-bg-main/40 p-2.5 rounded border border-border-subtle/50">
                   {msg.response}
                 </div>
               </div>
@@ -305,9 +375,9 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
         ))}
 
         {isGenerating && (
-          <div className="flex items-center gap-2 text-replit-orange text-xs py-2">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>AI is analyzing codebase and generating solution...</span>
+          <div className="flex items-center gap-2.5 text-replit-orange text-xs py-2 bg-replit-orange/5 px-3 rounded-md border border-replit-orange/20">
+            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+            <span className="font-mono text-[11px]">AI Assistant is analyzing codebase and generating solution...</span>
           </div>
         )}
 
@@ -315,40 +385,54 @@ export const AiAssistantPanel: React.FC<AiAssistantPanelProps> = ({
       </div>
 
       {/* Input Prompt Controls */}
-      <div className="p-3 border-t border-border-subtle bg-bg-secondary flex gap-2">
+      <div className="p-3 border-t border-border-subtle bg-bg-surface shrink-0">
         {isReadOnlyViewer ? (
-          <div className="w-full py-2 px-3 rounded bg-bg-surface border border-border-subtle text-text-muted text-xs flex items-center justify-center gap-1.5 select-none">
+          <div className="w-full py-2.5 px-3 rounded-md bg-bg-secondary border border-border-subtle text-text-muted text-xs flex items-center justify-center gap-2 select-none font-mono">
             <Lock className="w-3.5 h-3.5 text-amber-400" />
-            Viewer Mode (AI Prompting Disabled)
+            Viewer Mode — AI prompting is restricted to Room Owner and Participants.
           </div>
         ) : (
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              handleSendPrompt('CHAT');
+              if (prompt.trim() && !isGenerating) {
+                handleSendPrompt('CHAT');
+              }
             }}
-            className="flex w-full gap-2"
+            className="space-y-2"
           >
-            <input
-              type="text"
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder={`Ask AI pair programmer about your ${language} code...`}
-              disabled={isGenerating}
-              className="flex-1 bg-[#0d0f14] border border-border-subtle rounded px-3 py-2 text-xs text-white placeholder-text-muted focus:outline-none focus:border-replit-orange font-mono"
-            />
+            <div className="relative flex items-center">
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                onKeyDown={handleKeyDown}
+                rows={2}
+                placeholder={`Ask CodeSync AI Assistant about your ${language} code...`}
+                disabled={isGenerating}
+                className="w-full bg-bg-main border border-border-subtle rounded-md px-3 py-2 text-xs text-text-main placeholder:text-text-muted focus:outline-none focus:border-replit-orange resize-none font-sans"
+              />
 
-            <button
-              type="submit"
-              disabled={isGenerating || !prompt.trim()}
-              className="btn-replit-primary py-2 px-3.5 flex items-center gap-1 text-xs font-semibold shadow-md"
-            >
-              {isGenerating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Send className="w-3.5 h-3.5" />
-              )}
-            </button>
+              <button
+                type="submit"
+                disabled={isGenerating || !prompt.trim()}
+                className="absolute right-2 bottom-2.5 btn-replit-primary p-1.5 rounded text-xs font-semibold shadow-sm"
+                title="Send Prompt (Enter)"
+              >
+                {isGenerating ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4" />
+                )}
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between text-[10px] text-text-muted font-mono px-1">
+              <span className="flex items-center gap-1">
+                <CornerDownLeft className="w-3 h-3 text-text-muted" />
+                Press <kbd className="px-1 py-0.2 rounded bg-bg-secondary border border-border-subtle text-text-main">Enter</kbd> to send, <kbd className="px-1 py-0.2 rounded bg-bg-secondary border border-border-subtle text-text-main">Shift+Enter</kbd> for new line
+              </span>
+              <span>Rate limit: 10 / min</span>
+            </div>
           </form>
         )}
       </div>

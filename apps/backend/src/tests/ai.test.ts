@@ -48,6 +48,9 @@ describe('Phase 6 — AI Assistant & Pair Programming Intelligence Security Suit
   let ioServer: Server;
   let port: number;
 
+  const originalFetch = global.fetch;
+  let fetchSpy: jest.SpyInstance;
+
   const extractCookies = (res: any): string[] => {
     const raw = res.headers['set-cookie'];
     if (!raw) return [];
@@ -65,6 +68,38 @@ describe('Phase 6 — AI Assistant & Pair Programming Intelligence Security Suit
   };
 
   beforeEach(async () => {
+    fetchSpy = jest.spyOn(global, 'fetch').mockImplementation(async (url: any, init?: any) => {
+      const urlStr = String(url);
+      if (urlStr.includes('generativelanguage.googleapis.com')) {
+        const bodyStr = init?.body ? String(init.body) : '';
+        let replyText = '### 🤖 AI Pair Programmer Response\n\nHere is an explanation of binary search and related concepts.';
+        if (bodyStr.includes('EXPLAIN') || bodyStr.includes('Explain')) {
+          replyText = '### 💡 Code Explanation (PYTHON)\n\nThis function takes two numbers and returns their sum.';
+        } else if (bodyStr.includes('DEBUG') || bodyStr.includes('debug')) {
+          replyText = '### 🐞 AI Debugger Analysis (PYTHON)\n\nDiagnosed division by zero runtime error.';
+        } else if (bodyStr.includes('REFACTOR') || bodyStr.includes('refactor')) {
+          replyText = '### ⚡ Refactoring Suggestions (PYTHON)\n\nConsider early return guards.';
+        } else if (bodyStr.includes('TESTS') || bodyStr.includes('tests')) {
+          replyText = '### 🧪 Generated Unit Test Suite (PYTHON)\n\nUnit tests for solve function.';
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'content-type': 'application/json' }),
+          json: async () => ({
+            candidates: [
+              {
+                content: {
+                  parts: [{ text: replyText }],
+                },
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return originalFetch(url, init);
+    });
+
     await prisma.aiMessage.deleteMany({});
     await prisma.chatMessage.deleteMany({});
     await prisma.roomDocument.deleteMany({});
@@ -129,6 +164,7 @@ describe('Phase 6 — AI Assistant & Pair Programming Intelligence Security Suit
   });
 
   afterEach(async () => {
+    if (fetchSpy) fetchSpy.mockRestore();
     if (ioServer) ioServer.close();
     if (httpServer) httpServer.close();
   });
@@ -322,5 +358,90 @@ describe('Phase 6 — AI Assistant & Pair Programming Intelligence Security Suit
       .send({ action: 'CHAT', prompt: 'Test' });
 
     expect(res.status).toBe(404);
+  });
+
+  it('15. Security: Unauthenticated room-interview-* AI prompt is rejected with 401', async () => {
+    const res = await request(app)
+      .post('/api/v1/rooms/room-interview-secret/ai/prompt')
+      .send({ action: 'CHAT', prompt: 'Bypass attempt' });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('16. Security: Non-member cannot read AI history even if roomId contains "test" or "interview"', async () => {
+    const createRes = await request(app)
+      .post('/api/v1/rooms')
+      .set('Cookie', ownerCookie)
+      .send({ name: 'test-interview-secret', language: 'typescript' });
+    expect(createRes.status).toBe(201);
+    const createdRoomId = createRes.body.data.id;
+
+    const historyRes = await request(app)
+      .get(`/api/v1/rooms/${createdRoomId}/ai/history`)
+      .set('Cookie', nonMemberCookie);
+
+    expect(historyRes.status).toBe(403);
+  });
+
+  it('17. Security: Non-member with authenticated cookie gets 404 on non-existent room-test-* virtual prefix', async () => {
+    const res = await request(app)
+      .post('/api/v1/rooms/room-test-bypass/ai/prompt')
+      .set('Cookie', nonMemberCookie)
+      .send({ action: 'CHAT', prompt: 'Prefix bypass attempt' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('18. Gemini upstream timeout triggers offline static analysis fallback', async () => {
+    fetchSpy.mockImplementationOnce(async () => {
+      const error: any = new Error('The operation was aborted');
+      error.name = 'AbortError';
+      throw error;
+    });
+
+    const res = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/ai/explain`)
+      .set('Cookie', ownerCookie)
+      .send({ code: 'def calculate(n):\n    return n * 2' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.action).toBe('EXPLAIN');
+    expect(res.body.data.response).toContain('Offline Static Analysis');
+  });
+
+  it('19. Gemini network connection failure triggers offline static analysis fallback', async () => {
+    fetchSpy.mockImplementationOnce(async () => {
+      throw new TypeError('fetch failed: ECONNREFUSED');
+    });
+
+    const res = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/ai/debug`)
+      .set('Cookie', ownerCookie)
+      .send({ code: 'x = None.val', errorContext: 'AttributeError: NoneType has no attribute val' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.action).toBe('DEBUG');
+    expect(res.body.data.response).toContain('Offline Static Analysis');
+  });
+
+  it('20. Gemini invalid/500 upstream response triggers offline static analysis fallback', async () => {
+    fetchSpy.mockImplementationOnce(async () => ({
+      ok: false,
+      status: 500,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => ({ error: { message: 'Internal Server Error' } }),
+    } as Response));
+
+    const res = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/ai/refactor`)
+      .set('Cookie', ownerCookie)
+      .send({ code: 'def dirty():\n    pass' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.action).toBe('REFACTOR');
+    expect(res.body.data.response).toContain('Offline Static Analysis');
   });
 });

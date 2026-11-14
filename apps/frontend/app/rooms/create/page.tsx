@@ -1,25 +1,34 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../../context/auth-context';
-import { FormInput } from '../../../components/ui/form-input';
-import { Code2, FolderPlus, ArrowLeft, Loader2, AlertCircle, Terminal } from 'lucide-react';
+import { AppShell } from '../../../components/layout/app-shell';
+import { ArrowLeft, Loader2, Plus, Terminal } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
 export default function CreateRoomPage() {
   const router = useRouter();
   const { user, isLoading: isAuthLoading } = useAuth();
-
   const [name, setName] = useState('');
-  const [language, setLanguage] = useState<'javascript' | 'python' | 'cpp' | 'java'>('javascript');
+  const [language, setLanguage] = useState<'javascript' | 'typescript' | 'python' | 'cpp' | 'java'>('typescript');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (!isAuthLoading && !user) {
+      router.push('/sign-in');
+    }
+  }, [user, isAuthLoading, router]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!name.trim()) {
+      setError('Please provide a room name');
+      return;
+    }
     setError(null);
     setIsSubmitting(true);
 
@@ -28,115 +37,141 @@ export default function CreateRoomPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ name, language }),
+        body: JSON.stringify({ name: name.trim(), language }),
       });
-
-      const result = await res.json();
-
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Failed to create room');
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error?.message || 'Failed to create room');
       }
-
-      router.push(`/room/${result.data.id}`);
-    } catch (err: any) {
-      setError(err.message || 'Failed to create room');
+      router.push(`/rooms/${data.data.id}`);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to create room. Please check your connection.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (isAuthLoading) {
-    return (
-      <div className="min-h-screen bg-bg-main flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-replit-orange">
-          <Loader2 className="w-8 h-8 animate-spin" />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-bg-main flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        {/* Header */}
-        <div className="mb-6">
-          <Link href="/rooms" className="inline-flex items-center gap-1.5 text-xs font-mono text-text-muted hover:text-white mb-4 transition-colors">
-            <ArrowLeft className="w-3.5 h-3.5" />
-            Back to Rooms
+    <AppShell title="Create Room" subtitle="Initialize a new collaborative environment">
+      <main className="dashboard-content" style={{ maxWidth: '640px', margin: '40px auto' }}>
+        <div style={{ marginBottom: '20px' }}>
+          <Link
+            href="/rooms"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '13px',
+              color: 'var(--text-muted, #94a3b8)',
+              textDecoration: 'none',
+              marginBottom: '16px',
+            }}
+          >
+            <ArrowLeft size={14} /> Back to Rooms
           </Link>
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded bg-replit-orange/10 border border-replit-orange/30 text-replit-orange">
-              <FolderPlus className="w-5 h-5" />
-            </div>
-            <h1 className="text-xl font-bold text-white tracking-tight">Create Coding Room</h1>
-          </div>
-          <p className="text-xs text-text-muted mt-1">
-            Initialize a new collaborative environment
+          <div className="kicker">WORKSPACE SETUP</div>
+          <h1 style={{ fontSize: '24px', fontWeight: 700, margin: '4px 0 8px' }}>
+            Create Coding Room
+          </h1>
+          <p style={{ fontSize: '14px', color: 'var(--text-muted, #94a3b8)' }}>
+            Initialize a real-time collaborative workspace with isolated Docker execution and AI pair programming.
           </p>
         </div>
 
-        {/* Card */}
-        <div className="card-replit p-6 shadow-xl">
+        <div className="panel" style={{ padding: '24px' }}>
           {error && (
-            <div className="mb-4 p-3 rounded bg-red-500/10 border border-red-500/30 flex items-start gap-2.5 text-red-400 text-xs font-mono" role="alert">
-              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '10px 14px',
+                marginBottom: '18px',
+                borderRadius: '8px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#ef4444',
+                fontSize: '13px',
+              }}
+            >
               <span>{error}</span>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <FormInput
-              label="Room Name"
-              type="text"
-              icon={Terminal}
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. Algorithm Pairing Session"
-              autoFocus
-            />
+          <form onSubmit={handleSubmit}>
+            <label style={{ display: 'block', marginBottom: '18px' }}>
+              <span style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '6px' }}>
+                Room Name
+              </span>
+              <input
+                type="text"
+                placeholder="e.g. DSA Practice - Trees & Graphs"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+                autoFocus
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+                  background: 'var(--bg-surface, rgba(255,255,255,0.03))',
+                  color: 'inherit',
+                  fontSize: '14px',
+                }}
+              />
+            </label>
 
-            <div>
-              <label className="block text-xs font-mono font-medium text-text-muted mb-1.5 uppercase tracking-wider">
-                Target Language *
-              </label>
+            <label style={{ display: 'block', marginBottom: '24px' }}>
+              <span style={{ display: 'block', fontSize: '13px', fontWeight: 500, marginBottom: '6px' }}>
+                Target Language
+              </span>
               <select
                 value={language}
-                onChange={(e) => setLanguage(e.target.value as any)}
-                className="input-replit py-2.5 text-sm"
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                  setLanguage(e.target.value as typeof language)
+                }
+                style={{
+                  width: '100%',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+                  background: 'var(--bg-surface, rgba(255,255,255,0.03))',
+                  color: 'inherit',
+                  fontSize: '14px',
+                }}
               >
+                <option value="typescript">TypeScript</option>
                 <option value="javascript">JavaScript (Node.js)</option>
-                <option value="python">Python 3</option>
-                <option value="cpp">C++ (GCC)</option>
+                <option value="python">Python 3.11</option>
                 <option value="java">Java 21</option>
+                <option value="cpp">C++ 20</option>
               </select>
-            </div>
+            </label>
 
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <Link href="/rooms" className="btn-replit-secondary text-xs">
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+              <Link href="/rooms" className="app-button secondary">
                 Cancel
               </Link>
               <button
                 type="submit"
+                className="app-button"
                 disabled={isSubmitting}
-                className="btn-replit-primary text-xs"
               >
                 {isSubmitting ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Creating...
+                    <Loader2 className="lucide animate-spin" size={16} /> Creating...
                   </>
                 ) : (
                   <>
-                    <FolderPlus className="w-4 h-4" />
-                    Create Room
+                    <Plus className="lucide" size={16} /> Create Room
                   </>
                 )}
               </button>
             </div>
           </form>
         </div>
-      </div>
-    </div>
+      </main>
+    </AppShell>
   );
 }

@@ -7,10 +7,10 @@ import { registerSchema, loginSchema } from '@codesync/shared';
 
 const router = Router();
 
-// Rate limiter for authentication routes (100 requests per 15 minutes)
+// Rate limiter for authentication routes (100 requests per 15 minutes; relaxed in Jest integration suite)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: process.env.NODE_ENV === 'test' ? 1000 : 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: {

@@ -87,6 +87,21 @@ export class PresenceService {
     };
   }
 
+  public updateUserRole(
+    roomId: string,
+    userId: string,
+    role: RoomRole
+  ): RoomPresenceUserDto[] | null {
+    const roomMap = this.roomPresenceMap.get(roomId);
+    if (!roomMap) return null;
+
+    const existing = roomMap.get(userId);
+    if (!existing) return null;
+
+    existing.role = role;
+    return this.getRoomPresence(roomId);
+  }
+
   public getRoomPresence(roomId: string): RoomPresenceUserDto[] {
     const roomMap = this.roomPresenceMap.get(roomId);
     if (!roomMap) return [];

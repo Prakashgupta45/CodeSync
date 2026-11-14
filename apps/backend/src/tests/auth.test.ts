@@ -172,6 +172,7 @@ describe('Authentication API & Security Suite', () => {
   describe('POST /api/v1/auth/logout', () => {
     it('should revoke user refresh tokens and clear cookies', async () => {
       const loginRes = await request(app).post('/api/v1/auth/register').send(testUser);
+      expect(loginRes.body.data.accessToken).toBeUndefined();
       const cookies = loginRes.headers['set-cookie'];
 
       const logoutRes = await request(app).post('/api/v1/auth/logout').set('Cookie', cookies);
@@ -179,9 +180,32 @@ describe('Authentication API & Security Suite', () => {
       expect(logoutRes.status).toBe(200);
       expect(logoutRes.body.success).toBe(true);
 
+      // Verify refresh token record is marked revoked in PostgreSQL
+      const user = await prisma.user.findUnique({ where: { email: testUser.email } });
+      const activeTokens = await prisma.refreshToken.findMany({
+        where: { userId: user!.id, isRevoked: false },
+      });
+      expect(activeTokens.length).toBe(0);
+
       // Verify user is no longer authorized
       const meRes = await request(app).get('/api/v1/auth/me').set('Cookie', logoutRes.headers['set-cookie']);
       expect(meRes.status).toBe(401);
+    });
+
+    it('should never return accessToken in login or refresh JSON payloads', async () => {
+      await request(app).post('/api/v1/auth/register').send(testUser);
+      const loginRes = await request(app).post('/api/v1/auth/login').send({
+        email: testUser.email,
+        password: testUser.password,
+      });
+      expect(loginRes.status).toBe(200);
+      expect(loginRes.body.data.accessToken).toBeUndefined();
+
+      const refreshRes = await request(app)
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', loginRes.headers['set-cookie']);
+      expect(refreshRes.status).toBe(200);
+      expect(refreshRes.body.data.accessToken).toBeUndefined();
     });
   });
 });

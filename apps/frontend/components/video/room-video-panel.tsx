@@ -214,10 +214,34 @@ export const RoomVideoPanel: React.FC<RoomVideoPanelProps> = ({
               </div>
               <button
                 onClick={joinCall}
-                className="btn-replit-primary py-2.5 px-6 text-xs inline-flex items-center gap-2 font-semibold shadow-lg"
+                style={{
+                  background: '#ff5c00',
+                  color: '#ffffff',
+                  padding: '12px 28px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  border: 'none',
+                  cursor: 'pointer',
+                  boxShadow: '0 4px 16px rgba(255, 92, 0, 0.45)',
+                  transition: 'all 0.2s ease',
+                }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = '#e05200';
+                  (e.currentTarget as HTMLElement).style.transform = 'translateY(-1px)';
+                  (e.currentTarget as HTMLElement).style.boxShadow = '0 6px 20px rgba(255, 92, 0, 0.6)';
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.background = '#ff5c00';
+                  (e.currentTarget as HTMLElement).style.transform = 'translateY(0)';
+                  (e.currentTarget as HTMLElement).style.boxShadow = '0 4px 16px rgba(255, 92, 0, 0.45)';
+                }}
               >
-                <PhoneCall className="w-4 h-4" />
-                <span>Join Call</span>
+                <PhoneCall className="w-4 h-4" color="#ffffff" />
+                <span style={{ color: '#ffffff', fontWeight: 700 }}>Join Call</span>
               </button>
             </div>
           )}

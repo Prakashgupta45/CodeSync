@@ -1,34 +1,82 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/auth-context';
 import { RoomDto } from '@codesync/shared';
+import { AppShell } from '../../components/layout/app-shell';
 import {
-  Code2,
-  LogOut,
-  User,
-  Mail,
-  Shield,
-  Clock,
-  CheckCircle2,
   Plus,
-  LayoutDashboard,
-  FolderGit2,
-  Terminal,
+  GitBranch,
+  Code2,
+  Radio,
+  Check,
+  Users,
+  ArrowRight,
+  Bot,
   Loader2,
-  ArrowUpRight,
-  FolderPlus,
+  Clock,
+  Sparkles,
 } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
+function getLanguageColor(lang: string): string {
+  switch (lang.toLowerCase()) {
+    case 'typescript':
+      return 'orange';
+    case 'python':
+      return 'blue';
+    case 'javascript':
+      return 'purple';
+    case 'java':
+      return 'orange';
+    case 'cpp':
+    case 'c++':
+      return 'blue';
+    default:
+      return 'orange';
+  }
+}
+
+function formatRelativeTime(dateString?: string | Date): string {
+  if (!dateString) return 'recently';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHours = Math.floor(diffMin / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSec < 60) return 'Just now';
+  if (diffMin < 60) return `${diffMin} min ago`;
+  if (diffHours < 24) return `${diffHours} hour${diffHours > 1 ? 's' : ''} ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export default function DashboardPage() {
   const router = useRouter();
-  const { user, isLoading: isAuthLoading, logout } = useAuth();
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [rooms, setRooms] = useState<RoomDto[]>([]);
   const [isRoomsLoading, setIsRoomsLoading] = useState<boolean>(true);
+
+  // Modals controlled by AppShell
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [joinModalOpen, setJoinModalOpen] = useState(false);
+
+  // Create room modal state
+  const [newRoomName, setNewRoomName] = useState('');
+  const [newRoomLanguage, setNewRoomLanguage] = useState<'javascript' | 'typescript' | 'python' | 'cpp' | 'java'>('typescript');
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Join room modal state
+  const [joinRoomId, setJoinRoomId] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
 
   const fetchRooms = useCallback(async () => {
     try {
@@ -38,15 +86,14 @@ export default function DashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
       });
-
       if (res.ok) {
-        const result = await res.json();
-        if (result.success && Array.isArray(result.data)) {
-          setRooms(result.data.slice(0, 5)); // Recent 5 rooms
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data)) {
+          setRooms(data.data);
         }
       }
-    } catch (err) {
-      console.error('Failed to fetch user rooms:', err);
+    } catch {
+      // Keep silent for smooth UX
     } finally {
       setIsRoomsLoading(false);
     }
@@ -54,238 +101,389 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!isAuthLoading && !user) {
-      router.push('/login');
+      router.push('/sign-in');
     } else if (user) {
       fetchRooms();
     }
   }, [user, isAuthLoading, router, fetchRooms]);
 
-  if (isAuthLoading || !user) {
-    return (
-      <div className="min-h-screen bg-bg-main flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-replit-orange">
-          <Loader2 className="w-8 h-8 animate-spin" />
-          <p className="text-xs font-mono text-text-muted">Loading Replit Developer Workspace...</p>
-        </div>
-      </div>
-    );
-  }
-
-  const handleLogout = async () => {
-    await logout();
-    router.push('/login');
+  const handleCreateRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRoomName.trim()) {
+      setCreateError('Please enter a room name');
+      return;
+    }
+    setIsCreating(true);
+    setCreateError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/rooms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name: newRoomName.trim(), language: newRoomLanguage }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error?.message || 'Failed to create room');
+      }
+      setCreateModalOpen(false);
+      setNewRoomName('');
+      fetchRooms();
+      router.push(`/rooms/${data.data.id}`);
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create room');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
+  const handleJoinRoom = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!joinRoomId.trim()) {
+      setJoinError('Please enter a valid room ID');
+      return;
+    }
+    setJoinModalOpen(false);
+    router.push(`/rooms/${joinRoomId.trim()}`);
+  };
+
+  const activeRooms = useMemo(
+    () => rooms.filter((r) => r.status?.toUpperCase() === 'ACTIVE'),
+    [rooms]
+  );
+  const completedRooms = useMemo(
+    () => rooms.filter((r) => r.status?.toUpperCase() === 'ARCHIVED' || r.status?.toUpperCase() === 'COMPLETED'),
+    [rooms]
+  );
+  const totalCollaborators = useMemo(() => {
+    return rooms.reduce((acc, r) => acc + (r.memberCount || 1), 0);
+  }, [rooms]);
+
+  const formattedDate = useMemo(() => {
+    return new Date().toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
+  }, []);
+
+  const firstName = user?.name ? user.name.split(' ')[0] : 'Developer';
+
   return (
-    <div className="min-h-screen bg-bg-main text-text-main flex flex-col">
-      {/* Replit Top Navigation Bar */}
-      <header className="border-b border-border-subtle bg-bg-surface sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="p-1.5 rounded bg-replit-orange/10 border border-replit-orange/30 text-replit-orange">
-                <Code2 className="w-5 h-5" />
-              </div>
-              <span className="text-base font-bold text-white tracking-tight">
-                CodeSync <span className="text-replit-orange font-mono">AI</span>
-              </span>
-            </Link>
-
-            <nav className="flex items-center gap-1">
-              <Link
-                href="/dashboard"
-                className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium bg-bg-secondary text-white border border-border-subtle"
-              >
-                <LayoutDashboard className="w-3.5 h-3.5" />
-                Dashboard
-              </Link>
-              <Link
-                href="/rooms"
-                className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium text-text-muted hover:text-white transition-colors"
-              >
-                <FolderGit2 className="w-3.5 h-3.5" />
-                Rooms
-              </Link>
-            </nav>
+    <AppShell title="Overview" subtitle={formattedDate} onRoomCreated={fetchRooms}>
+      <main className="dashboard-content">
+        {/* Welcome Row */}
+        <div className="welcome-row">
+          <div>
+            <div className="kicker">YOUR WORKSPACE</div>
+            <h1>
+              Welcome back, {firstName}
+              <span>.</span>
+            </h1>
+            <p>Continue collaborating, coding, and building together.</p>
           </div>
-
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded bg-bg-secondary border border-border-subtle text-xs font-mono">
-              <div className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-text-main font-medium">{user.name}</span>
-            </div>
-
+          <div className="welcome-actions">
             <button
-              onClick={handleLogout}
-              className="btn-replit-secondary text-xs px-3 py-1 text-red-400 hover:text-red-300 border-red-500/20"
+              className="app-button"
+              onClick={() => {
+                setCreateError(null);
+                setCreateModalOpen(true);
+              }}
             >
-              <LogOut className="w-3.5 h-3.5" />
-              Logout
+              <Plus className="lucide" size={16} />
+              Create new room
+            </button>
+            <button
+              className="app-button secondary"
+              onClick={() => {
+                setJoinError(null);
+                setJoinModalOpen(true);
+              }}
+            >
+              <GitBranch className="lucide" size={16} />
+              Join existing
             </button>
           </div>
         </div>
-      </header>
 
-      {/* Workspace Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8 flex-1 w-full space-y-8">
-        {/* Welcome Section */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-border-subtle">
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono mb-2">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Phase 2 Coding Rooms Module Active
+        {/* Stats Grid */}
+        <section className="stats-grid">
+          <article className="stat-card">
+            <div className="stat-icon">
+              <Code2 className="lucide" size={20} />
             </div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">
-              Welcome back, {user.name}
-            </h1>
-            <p className="text-xs text-text-muted mt-1">
-              Logged in as <span className="font-mono text-text-main">{user.email}</span>. Your coding rooms and HTTP-only session are active.
-            </p>
-          </div>
+            <span>Total rooms</span>
+            <strong>{rooms.length}</strong>
+            <small>{rooms.length === 0 ? 'No rooms yet' : 'In your account'}</small>
+          </article>
 
-          {/* Action Buttons */}
-          <div className="flex items-center gap-2">
-            <Link href="/rooms/create" className="btn-replit-primary text-xs">
-              <Plus className="w-4 h-4" />
-              Create Room
-            </Link>
-            <Link href="/rooms" className="btn-replit-secondary text-xs">
-              <FolderGit2 className="w-4 h-4" />
-              View Rooms
-            </Link>
-          </div>
-        </div>
-
-        {/* Recent Rooms Table Container */}
-        <div className="card-replit overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-border-subtle bg-bg-surface flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Terminal className="w-4 h-4 text-replit-orange" />
-              <h2 className="text-sm font-bold text-white">My Coding Rooms</h2>
+          <article className="stat-card">
+            <div className="stat-icon">
+              <Radio className="lucide" size={20} />
             </div>
-            <Link href="/rooms" className="text-[11px] font-mono text-replit-orange hover:underline">
-              View All Rooms →
-            </Link>
-          </div>
+            <span>Active rooms</span>
+            <strong>{activeRooms.length}</strong>
+            <small>Live right now</small>
+          </article>
 
-          {isRoomsLoading ? (
-            <div className="py-8 text-center text-text-muted flex flex-col items-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin text-replit-orange" />
-              <span className="text-xs font-mono">Loading rooms...</span>
+          <article className="stat-card">
+            <div className="stat-icon">
+              <Check className="lucide" size={20} />
             </div>
-          ) : rooms.length === 0 ? (
-            <div className="py-12 text-center text-text-muted flex flex-col items-center gap-2">
-              <FolderPlus className="w-6 h-6 text-border-subtle" />
-              <p className="text-xs font-mono text-white">No coding rooms found</p>
-              <Link href="/rooms/create" className="btn-replit-primary text-xs mt-1">
-                <Plus className="w-3.5 h-3.5" />
-                Create First Room
+            <span>Completed sessions</span>
+            <strong>{completedRooms.length}</strong>
+            <small>Recorded</small>
+          </article>
+
+          <article className="stat-card">
+            <div className="stat-icon">
+              <Users className="lucide" size={20} />
+            </div>
+            <span>Collaborators</span>
+            <strong>{totalCollaborators}</strong>
+            <small>Across your rooms</small>
+          </article>
+        </section>
+
+        {/* Dashboard Grid */}
+        <section className="dashboard-grid">
+          {/* Left: Rooms Panel */}
+          <div className="panel rooms-panel">
+            <div className="panel-heading">
+              <div>
+                <h2>My coding rooms</h2>
+                <p>Your most recent collaborative workspaces</p>
+              </div>
+              <Link href="/rooms">
+                View all <ArrowRight className="lucide" size={16} />
               </Link>
             </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-border-subtle bg-bg-secondary/40 text-[11px] font-mono text-text-muted uppercase tracking-wider">
-                    <th className="px-5 py-2.5 font-medium">Room Name</th>
-                    <th className="px-5 py-2.5 font-medium">Room ID</th>
-                    <th className="px-5 py-2.5 font-medium">Language</th>
-                    <th className="px-5 py-2.5 font-medium">Status</th>
-                    <th className="px-5 py-2.5 font-medium text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border-subtle text-xs">
-                  {rooms.map((room) => (
-                    <tr key={room.id} className="hover:bg-bg-secondary/50 transition-colors">
-                      <td className="px-5 py-3 font-medium text-white flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-replit-orange" />
-                        {room.name}
-                      </td>
-                      <td className="px-5 py-3 font-mono text-text-muted text-[11px]">{room.id}</td>
-                      <td className="px-5 py-3 font-mono">
-                        <span className="px-2 py-0.5 rounded bg-bg-secondary border border-border-subtle text-text-muted">
-                          {room.language}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3 font-mono text-emerald-400">{room.status}</td>
-                      <td className="px-5 py-3 text-right">
-                        <Link
-                          href={`/room/${room.id}`}
-                          className="inline-flex items-center gap-1 text-replit-orange hover:underline font-mono text-[11px]"
-                        >
-                          Open
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
 
-        {/* User Account & Security Grid */}
-        <div className="grid md:grid-cols-3 gap-5">
-          <div className="card-replit p-5">
-            <div className="flex items-center gap-2 text-replit-orange mb-3">
-              <User className="w-4 h-4" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">User Details</h3>
-            </div>
-            <div className="space-y-2 text-xs">
-              <div>
-                <span className="text-[11px] text-text-muted block font-mono">NAME</span>
-                <span className="text-white font-medium">{user.name}</span>
+            <div className="room-table">
+              <div className="table-head">
+                <span>ROOM</span>
+                <span>LANGUAGE</span>
+                <span>MEMBERS</span>
+                <span>STATUS</span>
+                <span>LAST ACTIVITY</span>
+                <span></span>
               </div>
-              <div>
-                <span className="text-[11px] text-text-muted block font-mono">USER ID</span>
-                <span className="font-mono text-[11px] text-text-muted break-all">{user.id}</span>
-              </div>
+
+              {isRoomsLoading ? (
+                <div style={{ padding: '36px', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
+                  <Loader2 className="lucide animate-spin" size={24} style={{ margin: '0 auto 8px' }} />
+                  <p style={{ fontSize: '13px' }}>Loading workspaces...</p>
+                </div>
+              ) : rooms.length === 0 ? (
+                <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+                  <p style={{ fontSize: '14px', color: 'var(--text-muted, #94a3b8)', marginBottom: '16px' }}>
+                    You have not created or joined any coding rooms yet.
+                  </p>
+                  <button
+                    className="app-button"
+                    onClick={() => setCreateModalOpen(true)}
+                  >
+                    <Plus className="lucide" size={14} /> Create your first room
+                  </button>
+                </div>
+              ) : (
+                rooms.slice(0, 6).map((room) => {
+                  const color = getLanguageColor(room.language);
+                  const isRoomActive = (room.status || 'ACTIVE').toUpperCase() === 'ACTIVE';
+                  return (
+                    <Link
+                      key={room.id}
+                      className="table-row"
+                      href={`/rooms/${room.id}`}
+                    >
+                      <div>
+                        <span className={`room-dot ${color}`} />
+                        <strong>{room.name}</strong>
+                        <small>{room.id.slice(0, 14)}...</small>
+                      </div>
+                      <span className="language-tag">{room.language}</span>
+                      <span className="member-stack">
+                        <i className="avatar purple">
+                          {(user?.name || 'DEV').slice(0, 2).toUpperCase()}
+                        </i>
+                        {room.memberCount && room.memberCount > 1 ? (
+                          <b>+{room.memberCount - 1}</b>
+                        ) : null}
+                      </span>
+                      <span className={`status ${isRoomActive ? 'active' : 'completed'}`}>
+                        <i />
+                        {isRoomActive ? 'Active' : 'Completed'}
+                      </span>
+                      <span className="muted">{formatRelativeTime(room.updatedAt)}</span>
+                      <ArrowRight className="lucide" size={16} />
+                    </Link>
+                  );
+                })
+              )}
             </div>
           </div>
 
-          <div className="card-replit p-5">
-            <div className="flex items-center gap-2 text-replit-orange mb-3">
-              <Mail className="w-4 h-4" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">Account Config</h3>
-            </div>
-            <div className="space-y-2 text-xs">
+          {/* Right: Activity Panel */}
+          <div className="panel activity-panel">
+            <div className="panel-heading">
               <div>
-                <span className="text-[11px] text-text-muted block font-mono">EMAIL</span>
-                <span className="text-white font-medium">{user.email}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-muted block font-mono">ROLE</span>
-                <span className="inline-block px-2 py-0.5 rounded bg-replit-orange/20 text-replit-orange font-mono text-[11px]">
-                  {user.role}
-                </span>
+                <h2>Recent activity</h2>
+                <p>What is happening in your workspace</p>
               </div>
             </div>
-          </div>
 
-          <div className="card-replit p-5">
-            <div className="flex items-center gap-2 text-replit-orange mb-3">
-              <Shield className="w-4 h-4" />
-              <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">Security State</h3>
+            <div className="activity-list">
+              {rooms.length === 0 ? (
+                <div style={{ padding: '24px 12px', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
+                  <p style={{ margin: '0 0 6px 0', fontSize: '13px', fontWeight: 500 }}>No recent activity yet</p>
+                  <small style={{ fontSize: '11px', display: 'block' }}>Create a coding room to start collaborating</small>
+                </div>
+              ) : (
+                rooms.slice(0, 3).map((r) => {
+                  const isRoomActive = (r.status || 'ACTIVE').toUpperCase() === 'ACTIVE';
+                  const color = getLanguageColor(r.language);
+                  return (
+                    <div key={r.id}>
+                      <span className={`activity-icon ${color}`}>
+                        <Code2 className="lucide" size={16} />
+                      </span>
+                      <p>
+                        <strong>{r.name}</strong>
+                        <br />
+                        <span style={{ textTransform: 'capitalize' }}>{r.language}</span> &bull; {isRoomActive ? 'Active' : 'Completed'}
+                        <small>{formatRelativeTime(r.updatedAt)}</small>
+                      </p>
+                    </div>
+                  );
+                })
+              )}
             </div>
-            <div className="space-y-2 text-xs">
-              <div>
-                <span className="text-[11px] text-text-muted block font-mono">AUTH STRATEGY</span>
-                <span className="text-emerald-400 font-mono text-[11px] block">
-                  HTTP-Only Cookie + Rotation
-                </span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-muted block font-mono">CREATED AT</span>
-                <span className="text-text-muted font-mono text-[11px] flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-text-muted" />
-                  {new Date(user.createdAt).toLocaleDateString()}
-                </span>
-              </div>
-            </div>
+
+            <Link className="activity-link" href="/rooms">
+              See all activity <ArrowRight className="lucide" size={14} />
+            </Link>
           </div>
-        </div>
+        </section>
       </main>
-    </div>
+
+      {/* Create Room Modal */}
+      {createModalOpen && (
+        <div className="modal-backdrop" onClick={() => setCreateModalOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Create Coding Room</h3>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setCreateModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleCreateRoom}>
+              {createError && (
+                <div className="modal-error">
+                  <span>{createError}</span>
+                </div>
+              )}
+              <label className="modal-label">
+                Room Name
+                <input
+                  type="text"
+                  placeholder="e.g. Algorithms & Data Structures"
+                  value={newRoomName}
+                  onChange={(e) => setNewRoomName(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </label>
+
+              <label className="modal-label">
+                Programming Language
+                <select
+                  value={newRoomLanguage}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                    setNewRoomLanguage(e.target.value as typeof newRoomLanguage)
+                  }
+                >
+                  <option value="typescript">TypeScript</option>
+                  <option value="javascript">JavaScript (Node.js)</option>
+                  <option value="python">Python 3.11</option>
+                  <option value="java">Java 21</option>
+                  <option value="cpp">C++ 20</option>
+                </select>
+              </label>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="app-button secondary"
+                  onClick={() => setCreateModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="app-button"
+                  disabled={isCreating}
+                >
+                  {isCreating ? 'Creating...' : 'Create Room'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Join Room Modal */}
+      {joinModalOpen && (
+        <div className="modal-backdrop" onClick={() => setJoinModalOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Join Existing Room</h3>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setJoinModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleJoinRoom}>
+              {joinError && (
+                <div className="modal-error">
+                  <span>{joinError}</span>
+                </div>
+              )}
+              <label className="modal-label">
+                Room ID or Invite Code
+                <input
+                  type="text"
+                  placeholder="Paste room UUID or code here"
+                  value={joinRoomId}
+                  onChange={(e) => setJoinRoomId(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </label>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="app-button secondary"
+                  onClick={() => setJoinModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="app-button">
+                  Join Room
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </AppShell>
   );
 }

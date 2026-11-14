@@ -13,6 +13,10 @@ import {
   User,
   Maximize2,
   Minimize2,
+  ChevronDown,
+  ChevronUp,
+  Cpu,
+  Layers,
 } from 'lucide-react';
 import { RoomExecutionResultDto } from '@codesync/shared';
 import { Socket } from 'socket.io-client';
@@ -38,6 +42,8 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
   const [isRunning, setIsRunning] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const [isMinimized, setIsMinimized] = useState<boolean>(false);
+  const [activeTab, setActiveTab] = useState<'output' | 'docker' | 'problems'>('output');
 
   const isReadOnlyViewer = role === 'VIEWER';
 
@@ -64,6 +70,7 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
     try {
       setIsRunning(true);
       setError(null);
+      setIsMinimized(false);
 
       const code = codeGetter ? codeGetter() : '';
 
@@ -81,8 +88,8 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
       }
 
       setResult(data.data);
-    } catch (err: any) {
-      setError(err.message || 'Execution request failed');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Execution request failed');
     } finally {
       setIsRunning(false);
     }
@@ -102,26 +109,68 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
   }, [handleRunCode]);
 
   return (
-    <div className="w-full shrink-0 flex flex-col bg-[#12141a] border border-border-subtle rounded-lg text-xs font-mono select-none shadow-lg my-2">
+    <div className="w-full shrink-0 flex flex-col card-replit overflow-hidden border border-border-subtle rounded-lg text-xs font-mono select-none shadow-md mt-2">
       {/* Console Header Bar */}
-      <div className="px-4 py-2.5 border-b border-border-subtle bg-bg-secondary flex flex-wrap items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2 font-bold text-white">
-            <Terminal className="w-4 h-4 text-replit-orange" />
-            <span>Output Console</span>
-          </div>
+      <div className="px-3.5 py-1.5 border-b border-border-subtle bg-bg-surface flex items-center justify-between gap-2 shrink-0">
+        {/* Left: Console Tabs */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => {
+              setActiveTab('output');
+              setIsMinimized(false);
+            }}
+            className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
+              activeTab === 'output' && !isMinimized
+                ? 'bg-bg-secondary text-replit-orange font-bold'
+                : 'text-text-muted hover:text-text-main'
+            }`}
+          >
+            <Terminal className="w-3.5 h-3.5" />
+            <span>Output</span>
+          </button>
 
-          {/* Status Badge */}
+          <button
+            onClick={() => {
+              setActiveTab('docker');
+              setIsMinimized(false);
+            }}
+            className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
+              activeTab === 'docker' && !isMinimized
+                ? 'bg-bg-secondary text-replit-orange font-bold'
+                : 'text-text-muted hover:text-text-main'
+            }`}
+          >
+            <Cpu className="w-3.5 h-3.5" />
+            <span>Container</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('problems');
+              setIsMinimized(false);
+            }}
+            className={`px-2.5 py-1 rounded text-xs flex items-center gap-1.5 transition-colors ${
+              activeTab === 'problems' && !isMinimized
+                ? 'bg-bg-secondary text-replit-orange font-bold'
+                : 'text-text-muted hover:text-text-main'
+            }`}
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>Problems</span>
+          </button>
+
+          {/* Running State Badge */}
           {isRunning && (
-            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[11px] font-semibold">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/20 text-blue-400 text-[10px] font-semibold ml-2">
               <Loader2 className="w-3 h-3 animate-spin" />
-              Executing Code...
+              Running in Docker Sandbox...
             </span>
           )}
 
+          {/* Result Badge */}
           {result && !isRunning && (
             <span
-              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-semibold border ${
+              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border ml-2 ${
                 result.timedOut
                   ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                   : result.exitCode === 0
@@ -135,177 +184,182 @@ export const ExecutionConsole: React.FC<ExecutionConsoleProps> = ({
                 </>
               ) : result.exitCode === 0 ? (
                 <>
-                  <CheckCircle2 className="w-3 h-3" /> Exit: 0
+                  <CheckCircle2 className="w-3 h-3" /> Exit Code: 0
                 </>
               ) : (
                 <>
-                  <AlertTriangle className="w-3 h-3" /> Exit: {result.exitCode}
+                  <AlertTriangle className="w-3 h-3" /> Exit Code: {result.exitCode}
                 </>
               )}
             </span>
           )}
 
           {result?.executionTimeMs !== undefined && (
-            <span className="text-[11px] text-text-muted flex items-center gap-1">
+            <span className="text-[10px] text-text-muted flex items-center gap-1 font-mono ml-2">
               <Clock className="w-3 h-3" />
               {result.executionTimeMs}ms
             </span>
           )}
-
-          {result?.executedBy && (
-            <span className="text-[11px] text-text-muted flex items-center gap-1 border-l border-border-subtle pl-2 font-mono">
-              <User className="w-3 h-3 text-replit-orange" />
-              Executed by <strong className="text-white">{result.executedBy.name}</strong> ({result.executedBy.role.toLowerCase()})
-            </span>
-          )}
         </div>
 
-        {/* Action Controls */}
+        {/* Right: Actions */}
         <div className="flex items-center gap-2">
-          {/* Expand / Collapse Toggle Button */}
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="p-1.5 px-2.5 rounded bg-bg-surface hover:bg-bg-secondary text-text-muted hover:text-white transition-colors flex items-center gap-1.5 text-[11px] font-semibold border border-border-subtle"
-            title={isExpanded ? 'Collapse Console View' : 'Expand Console View'}
-          >
-            {isExpanded ? (
-              <>
-                <Minimize2 className="w-3.5 h-3.5 text-replit-orange" />
-                <span>Collapse</span>
-              </>
-            ) : (
-              <>
-                <Maximize2 className="w-3.5 h-3.5 text-replit-orange" />
-                <span>Expand</span>
-              </>
-            )}
-          </button>
-
           {result && (
             <button
               onClick={() => setResult(null)}
-              className="p-1.5 rounded text-text-muted hover:text-white hover:bg-bg-surface transition-colors"
+              className="p-1 rounded text-text-muted hover:text-text-main hover:bg-bg-secondary transition-colors"
               title="Clear Output"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </button>
           )}
 
+          <button
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="p-1 rounded text-text-muted hover:text-text-main hover:bg-bg-secondary transition-colors hidden sm:inline-flex"
+            title={isExpanded ? 'Collapse' : 'Expand'}
+          >
+            {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
+
+          <button
+            onClick={() => setIsMinimized(!isMinimized)}
+            className="p-1 rounded text-text-muted hover:text-text-main hover:bg-bg-secondary transition-colors"
+            title={isMinimized ? 'Show Console' : 'Minimize Console'}
+          >
+            {isMinimized ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Run Code Button */}
           {isReadOnlyViewer ? (
-            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded bg-bg-surface border border-border-subtle text-text-muted text-xs cursor-not-allowed">
-              <Lock className="w-3.5 h-3.5 text-amber-400" />
-              Viewer Mode (Read-Only)
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-bg-secondary border border-border-subtle text-text-muted text-[11px] cursor-not-allowed">
+              <Lock className="w-3 h-3 text-amber-400" />
+              Read-Only
             </span>
           ) : (
             <button
               onClick={handleRunCode}
               disabled={isRunning}
-              className="btn-replit-primary text-xs py-1.5 px-3.5 flex items-center gap-1.5 shadow-md font-semibold"
+              className="btn-replit-primary text-[11px] py-1 px-3 shadow-sm flex items-center gap-1.5"
+              title="Run Code in Isolated Docker Sandbox (Ctrl+Enter)"
             >
               {isRunning ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <>
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  <span>Running...</span>
+                </>
               ) : (
-                <Play className="w-3.5 h-3.5 fill-current" />
+                <>
+                  <Play className="w-3 h-3 fill-current" />
+                  <span>Run (Ctrl+Enter)</span>
+                </>
               )}
-              <span>{isRunning ? 'Running...' : 'Run Code (Ctrl+Enter)'}</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* Scrollable Terminal Output Viewport */}
-      <div
-        className={`p-4 bg-[#0d0f14] overflow-y-auto overflow-x-auto font-mono text-xs space-y-3 transition-all duration-200 ${
-          isExpanded ? 'h-[520px] min-h-[450px] max-h-[600px]' : 'h-[280px] min-h-[220px] max-h-[320px]'
-        }`}
-        style={{
-          whiteSpace: 'pre-wrap',
-          overflowWrap: 'anywhere',
-          wordBreak: 'break-word',
-        }}
-      >
-        {error && (
-          <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded text-xs leading-relaxed font-mono">
-            <strong>[Execution Request Error]:</strong> {error}
-          </div>
-        )}
-
-        {!isRunning && !result && !error && (
-          <div className="text-text-muted text-xs py-12 text-center select-none space-y-1">
-            <p>
-              Click <span className="text-replit-orange font-semibold font-mono">Run Code</span> or press{' '}
-              <kbd className="px-2 py-0.5 rounded bg-bg-secondary border border-border-subtle text-white text-[11px] shadow-sm">
-                Ctrl + Enter
-              </kbd>
-            </p>
-            <p className="text-[11px] text-text-muted opacity-80">
-              Executes current program inside isolated Docker container. Output will synchronize across room.
-            </p>
-          </div>
-        )}
-
-        {result && (
-          <div className="space-y-3 w-full">
-            {/* Compilation Error Block */}
-            {result.compileError && (
-              <div className="p-3 bg-red-950/40 border border-red-500/30 rounded text-red-300 font-mono text-xs leading-relaxed">
-                <div className="font-bold text-red-400 flex items-center gap-1.5 mb-1.5 uppercase tracking-wide text-[11px]">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Compilation Error
-                </div>
-                <pre className="whitespace-pre-wrap break-words overflow-x-auto font-mono text-xs leading-relaxed [overflow-wrap:anywhere]">
-                  {result.compileError}
-                </pre>
-              </div>
-            )}
-
-            {/* Runtime Error Block */}
-            {result.runtimeError && (
-              <div className="p-3 bg-red-950/40 border border-red-500/30 rounded text-red-300 font-mono text-xs leading-relaxed">
-                <div className="font-bold text-red-400 flex items-center gap-1.5 mb-1.5 uppercase tracking-wide text-[11px]">
-                  <AlertTriangle className="w-3.5 h-3.5" /> Runtime Error
-                </div>
-                <pre className="whitespace-pre-wrap break-words overflow-x-auto font-mono text-xs leading-relaxed [overflow-wrap:anywhere]">
-                  {result.runtimeError}
-                </pre>
-              </div>
-            )}
-
-            {/* Standard Output (stdout) */}
-            {result.stdout !== undefined && result.stdout !== null && result.stdout.length > 0 && (
-              <div className="p-3 bg-[#11141d] border border-emerald-500/20 rounded text-emerald-300 font-mono text-xs leading-relaxed shadow-inner w-full">
-                <div className="text-[10px] text-emerald-400/70 uppercase tracking-wider font-semibold mb-1.5 select-none">
-                  Standard Output (stdout)
-                </div>
-                <pre className="whitespace-pre-wrap break-words overflow-x-auto text-emerald-300 font-mono text-xs leading-relaxed [overflow-wrap:anywhere]">
-                  {result.stdout}
-                </pre>
-              </div>
-            )}
-
-            {/* Empty Output Message */}
-            {(!result.stdout || result.stdout.trim() === '') &&
-              !result.stderr &&
-              !result.compileError &&
-              !result.runtimeError && (
-                <div className="text-text-muted italic text-xs py-2">
-                  (Program executed successfully with no output)
+      {/* Console Output Body */}
+      {!isMinimized && (
+        <div
+          className={`bg-[#0d0f14] p-3 font-mono text-xs overflow-y-auto select-text transition-all ${
+            isExpanded ? 'h-64' : 'h-32'
+          }`}
+        >
+          {activeTab === 'output' && (
+            <>
+              {error && (
+                <div className="text-red-400 font-semibold mb-2">
+                  [Execution System Error]: {error}
                 </div>
               )}
 
-            {/* Standard Error (stderr) */}
-            {result.stderr && !result.compileError && !result.runtimeError && (
-              <div className="p-3 bg-amber-950/30 border border-amber-500/30 rounded text-amber-300 font-mono text-xs leading-relaxed">
-                <div className="text-[10px] text-amber-400/80 uppercase tracking-wider font-semibold mb-1.5 select-none">
-                  Standard Error (stderr)
+              {result ? (
+                <div className="space-y-1">
+                  {result.compileError && (
+                    <div className="text-red-400 whitespace-pre-wrap">
+                      <span className="font-bold underline">[Compilation Error]:</span>
+                      {'\n'}
+                      {result.compileError}
+                    </div>
+                  )}
+
+                  {result.runtimeError && (
+                    <div className="text-amber-400 whitespace-pre-wrap">
+                      <span className="font-bold underline">[Runtime Error]:</span>
+                      {'\n'}
+                      {result.runtimeError}
+                    </div>
+                  )}
+
+                  {result.stderr && !result.compileError && !result.runtimeError && (
+                    <div className="text-red-300 whitespace-pre-wrap">{result.stderr}</div>
+                  )}
+
+                  {result.stdout ? (
+                    <div className="text-[#e6edf3] whitespace-pre-wrap">{result.stdout}</div>
+                  ) : !result.stderr && !result.compileError && !result.runtimeError ? (
+                    <div className="text-text-muted italic">[Program executed successfully with no stdout output]</div>
+                  ) : null}
+
+                  {result.timedOut && (
+                    <div className="text-amber-400 font-bold pt-1 border-t border-border-subtle/40">
+                      [Process Terminated]: Exceeded max execution limit of 10 seconds.
+                    </div>
+                  )}
                 </div>
-                <pre className="whitespace-pre-wrap break-words overflow-x-auto text-amber-300 font-mono text-xs leading-relaxed [overflow-wrap:anywhere]">
-                  {result.stderr}
-                </pre>
+              ) : (
+                <div className="text-text-muted flex items-center gap-2 select-none h-full">
+                  <span>Press</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-bg-secondary border border-border-subtle text-[10px] text-text-main font-mono shadow-sm">
+                    Ctrl + Enter
+                  </kbd>
+                  <span>or click &quot;Run&quot; to execute in an isolated Docker container.</span>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'docker' && (
+            <div className="space-y-2 text-text-muted">
+              <div className="flex justify-between border-b border-border-subtle/50 pb-1">
+                <span>Target Language Runtime:</span>
+                <span className="text-text-main font-bold uppercase">{language}</span>
               </div>
-            )}
-          </div>
-        )}
-      </div>
+              <div className="flex justify-between border-b border-border-subtle/50 pb-1">
+                <span>Docker Sandbox Isolation:</span>
+                <span className="text-emerald-400 font-semibold">Active & Hardened</span>
+              </div>
+              <div className="flex justify-between border-b border-border-subtle/50 pb-1">
+                <span>CPU Execution Limit:</span>
+                <span className="text-text-main">1.0 vCPU</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Memory Allocation Limit:</span>
+                <span className="text-text-main">256MB RAM</span>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'problems' && (
+            <div className="space-y-1.5">
+              {result?.compileError || result?.runtimeError ? (
+                <div className="text-red-400">
+                  <span className="font-bold">Error detected during execution:</span>
+                  <p className="text-xs text-text-muted mt-1 whitespace-pre-wrap">
+                    {result.compileError || result.runtimeError}
+                  </p>
+                </div>
+              ) : (
+                <div className="text-emerald-400 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>No syntax or runtime issues reported.</span>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

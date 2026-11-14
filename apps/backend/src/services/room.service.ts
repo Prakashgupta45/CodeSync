@@ -1,6 +1,7 @@
 import { prisma } from '@codesync/database';
 import { CreateRoomInput, RoomDto, RoomMemberDto, RoomRole } from '@codesync/shared';
 import { AppError } from '../middleware/error.middleware';
+import { emitRoomLanguageUpdated } from '../socket/collaboration.socket';
 
 export class RoomService {
   private formatRoomMember(member: any): RoomMemberDto {
@@ -355,6 +356,10 @@ export class RoomService {
       throw new AppError('Target user is not a member of this room', 404, 'MEMBER_NOT_FOUND');
     }
 
+    if (targetMember.role === 'OWNER' || room.ownerId === targetUserId) {
+      throw new AppError('Owner role cannot be modified', 400, 'CANNOT_CHANGE_OWNER_ROLE');
+    }
+
     const updatedMember = await prisma.roomMember.update({
       where: { id: targetMember.id },
       data: { role: newRole as any },
@@ -366,6 +371,52 @@ export class RoomService {
     });
 
     return this.formatRoomMember(updatedMember);
+  }
+
+  public async updateRoomLanguage(
+    roomId: string,
+    userId: string,
+    language: string
+  ): Promise<RoomDto> {
+    const room = await prisma.room.findUnique({
+      where: { id: roomId },
+      include: {
+        members: true,
+      },
+    });
+
+    if (!room) {
+      throw new AppError('Room not found', 404, 'ROOM_NOT_FOUND');
+    }
+
+    const member = room.members.find((m) => m.userId === userId);
+    if (!member) {
+      throw new AppError('You are not a member of this room', 403, 'FORBIDDEN');
+    }
+
+    if (member.role === 'VIEWER') {
+      throw new AppError('Viewers have read-only access and cannot change room language', 403, 'FORBIDDEN');
+    }
+
+    const normalized = language.toLowerCase().trim() === 'c++' ? 'cpp' : language.toLowerCase().trim();
+
+    const updated = await prisma.room.update({
+      where: { id: roomId },
+      data: { language: normalized },
+      include: {
+        members: {
+          include: {
+            user: { select: { id: true, name: true, email: true, avatarUrl: true } },
+          },
+        },
+        owner: { select: { id: true, name: true, email: true, avatarUrl: true } },
+        _count: { select: { members: true } },
+      },
+    });
+
+    emitRoomLanguageUpdated(roomId, normalized, userId);
+
+    return this.formatRoom(updated, userId);
   }
 }
 

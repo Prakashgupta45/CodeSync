@@ -28,6 +28,57 @@ export function getIoInstance(): Server | null {
   return ioInstance;
 }
 
+export function emitRoomLanguageUpdated(
+  roomId: string,
+  language: string,
+  userId?: string,
+  targetFile?: string
+): void {
+  if (ioInstance) {
+    ioInstance.to(roomId).emit('room:language-updated', {
+      roomId,
+      language,
+      userId,
+      targetFile,
+    });
+  }
+}
+
+export function emitRoomMembersUpdated(roomId: string, payload: any): void {
+  if (ioInstance) {
+    ioInstance.to(roomId).emit('room:members-updated', payload);
+  }
+}
+
+export function syncRoomMemberRole(roomId: string, userId: string, role: string, memberData?: any): void {
+  if (ioInstance) {
+    const roomSockets = ioInstance.sockets.adapter.rooms.get(roomId);
+    if (roomSockets) {
+      for (const socketId of roomSockets) {
+        const s = ioInstance.sockets.sockets.get(socketId) as AuthenticatedSocket | undefined;
+        if (s && s.data.user?.userId === userId) {
+          s.data.role = role as any;
+        }
+      }
+    }
+
+    const presenceUsers = presenceService.updateUserRole(roomId, userId, role as any);
+    if (presenceUsers) {
+      ioInstance.to(roomId).emit('presence:update', {
+        roomId,
+        users: presenceUsers,
+      });
+    }
+
+    ioInstance.to(roomId).emit('room:role-updated', {
+      roomId,
+      userId,
+      role,
+      member: memberData,
+    });
+  }
+}
+
 export function setupCollaborationSockets(io: Server) {
   ioInstance = io;
   // Socket Authentication Middleware
@@ -177,6 +228,8 @@ export function setupCollaborationSockets(io: Server) {
         socket.to(roomId).emit('collaboration:update', {
           roomId,
           update,
+          userId: user.userId,
+          socketId: socket.id,
         });
       } catch (err: any) {
         socket.emit('collaboration:error', { message: 'Failed to process document update' });
@@ -192,6 +245,31 @@ export function setupCollaborationSockets(io: Server) {
           name: user.name,
           cursor,
         });
+      }
+    });
+
+    // 3b. Room Language Change & Multi-Language File Synchronization
+    socket.on('room:language-change', (payload: { roomId: string; language: string; targetFile?: string }) => {
+      try {
+        const { roomId, language, targetFile } = payload || {};
+        if (!roomId || !language) return;
+
+        if (socket.data.role === 'VIEWER') {
+          socket.emit('collaboration:error', { message: 'Viewers cannot change room language' });
+          return;
+        }
+
+        io.to(roomId).emit('room:language-updated', {
+          roomId,
+          language,
+          targetFile,
+          changedBy: {
+            userId: user.userId,
+            name: user.name,
+          },
+        });
+      } catch (err: any) {
+        socket.emit('collaboration:error', { message: 'Failed to broadcast language change' });
       }
     });
 

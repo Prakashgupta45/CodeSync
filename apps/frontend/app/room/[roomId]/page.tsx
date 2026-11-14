@@ -1,63 +1,89 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, use } from 'react';
+export const dynamic = 'force-dynamic';
+
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
-import { useRouter } from 'next/navigation';
+import nextDynamic from 'next/dynamic';
+import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '../../context/auth-context';
-import { RoomDto, RoomPresenceUserDto } from '@codesync/shared';
+import { RoomDto, RoomMemberDto, RoomPresenceUserDto, RoomRole } from '@codesync/shared';
 import { Socket } from 'socket.io-client';
 import { RoomChatPanel } from '../../../components/chat/room-chat-panel';
 import { ExecutionConsole } from '../../../components/editor/execution-console';
 import { AiAssistantPanel } from '../../../components/ai/ai-assistant-panel';
 import { RoomVideoPanel } from '../../../components/video/room-video-panel';
+import { LanguageDropdown, getLanguageDisplay } from '../../../components/editor/language-dropdown';
 import {
-  Code2,
+  getStarterCode,
+  checkLanguageMismatch,
+  isCodeEmptyOrWhitespace,
+  getDefaultFilenameForLanguage,
+  getLanguageForFilename,
+  normalizeLang,
+} from '../../../components/editor/language-templates';
+import {
+  ArrowLeft,
   Copy,
   Check,
-  LogOut,
+  Video,
+  Bot,
+  Plus,
+  Loader2,
   Trash2,
   Users,
-  Terminal,
-  Loader2,
-  AlertCircle,
-  UserX,
-  ArrowLeft,
-  Info,
-  Clock,
   MessageSquare,
-  Video,
   Sparkles,
+  ChevronDown,
+  UserX,
+  Shield,
+  FileCode,
+  Zap,
+  FolderTree,
+  AlertTriangle,
+  X,
 } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
 // Dynamic import for Monaco Editor component (CSR only)
-const RealtimeEditor = dynamic(
+const RealtimeEditor = nextDynamic(
   () => import('../../../components/editor/realtime-editor').then((m) => m.RealtimeEditor),
   {
     ssr: false,
     loading: () => (
-      <div className="h-[500px] w-full bg-[#12141a] border border-border-subtle rounded-lg flex items-center justify-center text-text-muted">
-        <div className="flex flex-col items-center gap-2 font-mono text-xs">
-          <Loader2 className="w-5 h-5 animate-spin text-replit-orange" />
-          <span>Initializing Real-Time Monaco Editor...</span>
+      <div style={{ height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-main, #0f172a)', color: 'var(--text-muted, #94a3b8)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', fontFamily: 'monospace', fontSize: '12px' }}>
+          <Loader2 className="animate-spin" size={20} color="#ff5c00" />
+          <span>Initializing Monaco & Yjs engine...</span>
         </div>
       </div>
     ),
   }
 );
 
-interface RoomPageProps {
-  params: Promise<{ roomId: string }>;
-}
-
-export default function RoomPage({ params }: RoomPageProps) {
-  const unwrappedParams = use(params);
-  const roomId = unwrappedParams.roomId;
+import type { editor as MonacoEditor } from 'monaco-editor';
+export default function RoomPage() {
+  const params = useParams<{ roomId: string }>();
+  const roomId = params?.roomId || '';
 
   const router = useRouter();
   const { user, isLoading: isAuthLoading } = useAuth();
+  const stableUser = React.useMemo(
+    () => ({ id: user?.id || '', name: user?.name || '' }),
+    [user?.id, user?.name]
+  );
+  const editorInstanceRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const docApiRef = useRef<{
+    addFile: (name: string, initialCode?: string) => void;
+    removeFile: (name: string) => void;
+    renameFile: (oldName: string, newName: string) => void;
+    setActiveFileContent?: (content: string) => void;
+  } | null>(null);
+  const [currentEditorCode, setCurrentEditorCode] = useState<string>('');
+  const [dismissedMismatchKey, setDismissedMismatchKey] = useState<string>('');
+  const [copiedCode, setCopiedCode] = useState<boolean>(false);
+  const [formatNotice, setFormatNotice] = useState<string | null>(null);
 
   const [room, setRoom] = useState<RoomDto | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -67,29 +93,113 @@ export default function RoomPage({ params }: RoomPageProps) {
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const [updatingMemberId, setUpdatingMemberId] = useState<string | null>(null);
 
-  // Real-Time Socket.IO, Chat, Presence, WebRTC, AI & Execution State
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [isChatOpen, setIsChatOpen] = useState<boolean>(true);
-  const [isAiPanelOpen, setIsAiPanelOpen] = useState<boolean>(false);
+  const currentEditorCodeRef = useRef<string>('');
+  const codeDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleCodeChange = useCallback((code: string) => {
+    currentEditorCodeRef.current = code;
+    if (codeDebounceTimerRef.current) {
+      clearTimeout(codeDebounceTimerRef.current);
+    }
+    codeDebounceTimerRef.current = setTimeout(() => {
+      setCurrentEditorCode(code);
+    }, 250);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (codeDebounceTimerRef.current) {
+        clearTimeout(codeDebounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleWorkspaceFilesSync = useCallback((syncedFiles: string[]) => {
+    if (syncedFiles.length > 0) {
+      setFiles(syncedFiles);
+    }
+  }, []);
+
+  const handleLanguageUpdate = useCallback((newLang: string) => {
+    setRoom((prev) => (prev ? { ...prev, language: newLang } : prev));
+  }, []);
+
+  const handleDocInit = useCallback((api: any) => {
+    docApiRef.current = api;
+  }, []);
+
+  const handleEditorMount = useCallback((ed: any) => {
+    editorInstanceRef.current = ed;
+    const val = ed.getValue();
+    currentEditorCodeRef.current = val;
+    setCurrentEditorCode(val);
+  }, []);
+
+  const handleSocketInit = useCallback((s: Socket) => {
+    setSocket(s);
+  }, []);
+
+  const handleCodeGetterInit = useCallback((getter: () => string) => {
+    setCodeGetter(() => getter);
+  }, []);
+  const [sidebarTab, setSidebarTab] = useState<'members' | 'chat' | 'assistant'>('members');
+  const [isExplorerOpen, setIsExplorerOpen] = useState<boolean>(true);
   const [isVideoModalOpen, setIsVideoModalOpen] = useState<boolean>(false);
   const [isWebRtcCallActive, setIsWebRtcCallActive] = useState<boolean>(false);
+
+  // Files in workspace
+  const [files, setFiles] = useState<string[]>([]);
+  const [activeFile, setActiveFile] = useState<string>('solution.ts');
+
+  // Real-Time Socket.IO, Presence, & Execution
+  const [socket, setSocket] = useState<Socket | null>(null);
   const [presenceUsers, setPresenceUsers] = useState<RoomPresenceUserDto[]>([]);
   const [codeGetter, setCodeGetter] = useState<(() => string) | undefined>(undefined);
   const [unreadCount, setUnreadCount] = useState<number>(0);
+  const roomMembersRef = useRef<RoomMemberDto[]>([]);
+  const isRefreshingMembersRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    roomMembersRef.current = room?.members || [];
+  }, [room?.members]);
+
+  // Theme
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+
+  useEffect(() => {
+    const saved = (localStorage.getItem('codesync-theme') as 'dark' | 'light') || 'dark';
+    setTheme(saved);
+    document.documentElement.setAttribute('data-theme', saved);
+    if (saved === 'light') {
+      document.documentElement.classList.add('light');
+    } else {
+      document.documentElement.classList.remove('light');
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    localStorage.setItem('codesync-theme', next);
+    document.documentElement.setAttribute('data-theme', next);
+    if (next === 'light') {
+      document.documentElement.classList.add('light');
+    } else {
+      document.documentElement.classList.remove('light');
+    }
+  };
 
   const fetchRoomDetails = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
 
-      // 1. Try fetching room details
       let res = await fetch(`${API_BASE_URL}/rooms/${roomId}`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
       });
 
-      // 2. If 403 (Not a member), auto-attempt joining the room
       if (res.status === 403) {
         const joinRes = await fetch(`${API_BASE_URL}/rooms/${roomId}/join`, {
           method: 'POST',
@@ -106,73 +216,200 @@ export default function RoomPage({ params }: RoomPageProps) {
         }
       }
 
-      const result = await res.json();
-
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Failed to load room details');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error?.message || 'Unable to join or find room');
       }
 
-      setRoom(result.data);
-    } catch (err: any) {
-      setError(err.message || 'Unable to access room');
+      const result = await res.json();
+      if (result.success && result.data) {
+        setRoom(result.data);
+
+        // Populate virtual workspace files based on language
+        const lang = result.data.language || 'typescript';
+        const initialFile = getDefaultFilenameForLanguage(lang);
+        setFiles([initialFile]);
+        setActiveFile(initialFile);
+      } else {
+        throw new Error('Invalid room response format');
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to connect to room');
     } finally {
       setIsLoading(false);
     }
   }, [roomId]);
 
+  const refreshMembers = useCallback(async () => {
+    if (!roomId || isRefreshingMembersRef.current) return;
+    isRefreshingMembersRef.current = true;
+    try {
+      const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/members`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      });
+      if (!res.ok) return;
+      const result = await res.json();
+      if (result.success && Array.isArray(result.data)) {
+        const fetchedMembers: RoomMemberDto[] = result.data;
+        roomMembersRef.current = fetchedMembers;
+        setRoom((prev) => {
+          if (!prev) return prev;
+          const selfMember = fetchedMembers.find((m) => m.userId === user?.id);
+          return {
+            ...prev,
+            members: fetchedMembers,
+            memberCount: fetchedMembers.length,
+            ...(selfMember ? { role: selfMember.role } : {}),
+          };
+        });
+      }
+    } catch (_) {
+      // Transient fetch failure should not break existing workspace state
+    } finally {
+      isRefreshingMembersRef.current = false;
+    }
+  }, [roomId, user?.id]);
+
+  const applyAuthoritativeRole = useCallback(
+    (targetUserId: string, nextRole: RoomRole, updatedMember?: RoomMemberDto) => {
+      setRoom((prev) => {
+        if (!prev) return prev;
+        const currentMembers = prev.members || [];
+        const hasMember = currentMembers.some((m) => m.userId === targetUserId);
+        const nextMembers = hasMember
+          ? currentMembers.map((m) =>
+              m.userId === targetUserId
+                ? { ...m, ...(updatedMember || {}), role: nextRole }
+                : m
+            )
+          : updatedMember
+          ? [...currentMembers, updatedMember]
+          : currentMembers;
+
+        roomMembersRef.current = nextMembers;
+
+        return {
+          ...prev,
+          members: nextMembers,
+          ...(targetUserId === user?.id ? { role: nextRole } : {}),
+        };
+      });
+
+      setPresenceUsers((prev) =>
+        prev.map((u) => (u.userId === targetUserId ? { ...u, role: nextRole } : u))
+      );
+    },
+    [user?.id]
+  );
+
+  const handleRoleUpdate = useCallback(
+    (nextRole: any) => {
+      if (user?.id) {
+        applyAuthoritativeRole(user.id, nextRole);
+      }
+    },
+    [user?.id, applyAuthoritativeRole]
+  );
+
+  const handlePresenceUpdate = useCallback(
+    (users: RoomPresenceUserDto[]) => {
+      setPresenceUsers(users);
+      const knownIds = new Set(roomMembersRef.current.map((m) => m.userId));
+      const hasUnknownActiveUser = users.some((u) => !knownIds.has(u.userId));
+      if (hasUnknownActiveUser) {
+        refreshMembers();
+      }
+    },
+    [refreshMembers]
+  );
+
+  useEffect(() => {
+    if (!socket || !roomId) return;
+
+    const handleMembersUpdated = (data: { roomId: string; action?: string; userId?: string }) => {
+      if (data?.roomId === roomId) {
+        refreshMembers();
+      }
+    };
+
+    const handlePresenceJoin = (data: { userId?: string }) => {
+      if (!data?.userId) return;
+      const alreadyKnown = roomMembersRef.current.some((m) => m.userId === data.userId);
+      if (!alreadyKnown) {
+        refreshMembers();
+      }
+    };
+
+    const handleRoleUpdated = (data: {
+      roomId: string;
+      userId: string;
+      role: RoomRole;
+      member?: RoomMemberDto;
+    }) => {
+      if (!data || data.roomId !== roomId || !data.userId || !data.role) return;
+      const alreadyKnown = roomMembersRef.current.some((m) => m.userId === data.userId);
+      applyAuthoritativeRole(data.userId, data.role, data.member);
+      if (!alreadyKnown && !data.member) {
+        refreshMembers();
+      }
+    };
+
+    const handleLanguageUpdated = (data: { roomId: string; language: string; targetFile?: string; userId?: string }) => {
+      if (!data || data.roomId !== roomId || !data.language) return;
+      setRoom((prev) => (prev ? { ...prev, language: data.language } : prev));
+      if (data.targetFile) {
+        setFiles((prev) => (prev.includes(data.targetFile!) ? prev : [...prev, data.targetFile!]));
+        setActiveFile(data.targetFile);
+      }
+    };
+
+    socket.on('room:members-updated', handleMembersUpdated);
+    socket.on('presence:join', handlePresenceJoin);
+    socket.on('room:role-updated', handleRoleUpdated);
+    socket.on('room:language-updated', handleLanguageUpdated);
+
+    return () => {
+      socket.off('room:members-updated', handleMembersUpdated);
+      socket.off('presence:join', handlePresenceJoin);
+      socket.off('room:role-updated', handleRoleUpdated);
+      socket.off('room:language-updated', handleLanguageUpdated);
+    };
+  }, [socket, roomId, refreshMembers, applyAuthoritativeRole]);
+
   useEffect(() => {
     if (!isAuthLoading && !user) {
-      router.push('/login');
+      router.push('/sign-in');
     } else if (user) {
       fetchRoomDetails();
     }
   }, [user, isAuthLoading, router, fetchRoomDetails]);
 
-  const handleCopyInvite = () => {
-    if (typeof window !== 'undefined') {
-      const inviteUrl = window.location.href;
-      navigator.clipboard.writeText(inviteUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
-    }
+  const handleCopyLink = () => {
+    const inviteUrl = window.location.href;
+    navigator.clipboard.writeText(inviteUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleLeaveRoom = async () => {
-    if (!room) return;
-    if (room.ownerId === user?.id) {
-      alert('Room owner cannot leave the room. Please delete the room to terminate the workspace.');
-      return;
-    }
-
-    if (!confirm('Are you sure you want to leave this coding room?')) return;
-
+    if (!confirm('Leave this coding room?')) return;
     try {
       setIsLeaving(true);
-      const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/leave`, {
+      await fetch(`${API_BASE_URL}/rooms/${roomId}/leave`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
       });
-
-      const result = await res.json();
-      if (!res.ok || !result.success) {
-        throw new Error(result.error?.message || 'Failed to leave room');
-      }
-
       router.push('/rooms');
-    } catch (err: any) {
-      alert(err.message || 'Failed to leave room');
-    } finally {
-      setIsLeaving(false);
+    } catch {
+      router.push('/rooms');
     }
   };
 
   const handleDeleteRoom = async () => {
-    if (!room) return;
-    if (!confirm('CAUTION: Deleting this room will permanently remove all member access. Continue?')) {
-      return;
-    }
-
+    if (!confirm('Are you sure you want to permanently delete this room? This action cannot be undone.')) return;
     try {
       setIsDeleting(true);
       const res = await fetch(`${API_BASE_URL}/rooms/${roomId}`, {
@@ -180,38 +417,32 @@ export default function RoomPage({ params }: RoomPageProps) {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
       });
-
       const result = await res.json();
       if (!res.ok || !result.success) {
         throw new Error(result.error?.message || 'Failed to delete room');
       }
-
       router.push('/rooms');
-    } catch (err: any) {
-      alert(err.message || 'Failed to delete room');
-    } finally {
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to delete room');
       setIsDeleting(false);
     }
   };
 
   const handleRemoveMember = async (memberUserId: string, memberName: string) => {
     if (!confirm(`Remove member ${memberName} from this room?`)) return;
-
     try {
       const res = await fetch(`${API_BASE_URL}/rooms/${roomId}/members/${memberUserId}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
       });
-
       const result = await res.json();
       if (!res.ok || !result.success) {
         throw new Error(result.error?.message || 'Failed to remove member');
       }
-
       fetchRoomDetails();
-    } catch (err: any) {
-      alert(err.message || 'Failed to remove member');
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to remove member');
     }
   };
 
@@ -224,26 +455,78 @@ export default function RoomPage({ params }: RoomPageProps) {
         credentials: 'include',
         body: JSON.stringify({ role: newRole }),
       });
-
       const result = await res.json();
       if (!res.ok || !result.success) {
         throw new Error(result.error?.message || 'Failed to update member role');
       }
-
       await fetchRoomDetails();
-    } catch (err: any) {
-      alert(err.message || 'Failed to update member role');
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to update member role');
     } finally {
       setUpdatingMemberId(null);
     }
   };
 
+  const userMember = room?.members?.find((m) => m.userId === user?.id);
+  const isOwner = Boolean(
+    room && user && (room.ownerId === user.id || room.role === 'OWNER' || userMember?.role === 'OWNER')
+  );
+  const currentRole = userMember?.role || room?.role || (isOwner ? 'OWNER' : 'PARTICIPANT');
+
+  const handleLanguageChange = useCallback(
+    async (newLanguage: string) => {
+      if (!room || currentRole === 'VIEWER') return;
+      const normalized = normalizeLang(newLanguage);
+      const targetFile = getDefaultFilenameForLanguage(normalized);
+
+      // 1. Immediately update local state
+      setRoom((prev) => (prev ? { ...prev, language: normalized } : prev));
+
+      // 2. Ensure targetFile is added to workspace and seeded with starter code if absent
+      setFiles((prev) => {
+        if (!prev.includes(targetFile)) {
+          const starter = getStarterCode(normalized);
+          docApiRef.current?.addFile(targetFile, starter);
+          return [...prev, targetFile];
+        }
+        return prev;
+      });
+
+      // 3. Switch active file to targetFile
+      setActiveFile(targetFile);
+
+      // 4. Broadcast via Socket.IO to all room participants
+      if (socket && socket.connected) {
+        socket.emit('room:language-change', {
+          roomId: room.id,
+          language: normalized,
+          targetFile,
+        });
+      }
+
+      // 5. Persist to PostgreSQL backend via REST API
+      try {
+        await fetch(`${API_BASE_URL}/rooms/${room.id}/language`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ language: normalized }),
+        });
+      } catch (err) {
+        console.error('Failed to persist room language:', err);
+      }
+    },
+    [room, currentRole, socket]
+  );
+
   if (isAuthLoading || isLoading) {
     return (
-      <div className="min-h-screen bg-bg-main flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-replit-orange">
-          <Loader2 className="w-8 h-8 animate-spin" />
-          <p className="text-xs font-mono text-text-muted">Loading Room Workspace...</p>
+      <div style={{ height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-main, #0b0f19)', color: 'var(--text-main, #f8fafc)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+          <Loader2 className="animate-spin" size={32} color="#ff5c00" />
+          <p style={{ fontSize: '13px', color: 'var(--text-muted, #94a3b8)', fontFamily: 'monospace' }}>
+            Loading CodeSync IDE...
+          </p>
         </div>
       </div>
     );
@@ -251,315 +534,570 @@ export default function RoomPage({ params }: RoomPageProps) {
 
   if (error || !room || !user) {
     return (
-      <div className="min-h-screen bg-bg-main flex items-center justify-center p-4">
-        <div className="card-replit p-6 max-w-md w-full text-center space-y-4">
-          <AlertCircle className="w-10 h-10 text-red-400 mx-auto" />
-          <h1 className="text-lg font-bold text-white">Room Access Error</h1>
-          <p className="text-xs text-text-muted">{error || 'Room not found'}</p>
-          <Link href="/rooms" className="btn-replit-primary text-xs inline-flex">
-            <ArrowLeft className="w-4 h-4" />
-            Back to Coding Rooms
+      <div style={{ height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-main, #0b0f19)' }}>
+        <div className="panel" style={{ maxWidth: '420px', padding: '32px', textAlign: 'center' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 700, marginBottom: '8px' }}>Room Error</h2>
+          <p style={{ fontSize: '13px', color: 'var(--text-muted, #94a3b8)', marginBottom: '20px' }}>
+            {error || 'Room not found'}
+          </p>
+          <Link href="/rooms" className="app-button">
+            <ArrowLeft size={14} /> Back to Rooms
           </Link>
         </div>
       </div>
     );
   }
 
-  const userMember = room.members?.find((m) => m.userId === user.id);
-  const isOwner = room.ownerId === user.id || room.role === 'OWNER' || userMember?.role === 'OWNER';
-  const currentRole = userMember?.role || room.role || (isOwner ? 'OWNER' : 'PARTICIPANT');
+  const onlineCount = Math.max(1, presenceUsers.length);
 
   return (
-    <div className="min-h-screen bg-bg-main text-text-main flex flex-col relative">
-      {/* Top Header Bar */}
-      <header className="border-b border-border-subtle bg-bg-surface sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-4">
-            <Link href="/rooms" className="p-1.5 rounded hover:bg-bg-secondary text-text-muted hover:text-white transition-colors">
-              <ArrowLeft className="w-4 h-4" />
-            </Link>
+    <div className="ide-shell">
+      {/* 1. IDE Toolbar */}
+      <header className="ide-toolbar">
+        <Link className="ide-back" href="/dashboard">
+          <ArrowLeft size={16} /> Dashboard
+        </Link>
 
-            <div className="flex items-center gap-2">
-              <Terminal className="w-5 h-5 text-replit-orange" />
-              <h1 className="text-base font-bold text-white">{room.name}</h1>
-              <span className="px-2 py-0.5 rounded bg-bg-secondary border border-border-subtle text-[11px] font-mono text-text-muted">
-                {room.language}
-              </span>
-              <span
-                className={`px-2 py-0.5 rounded text-[11px] font-mono font-semibold ${
-                  room.status === 'ACTIVE'
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                    : 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
-                }`}
-              >
-                {room.status}
-              </span>
-            </div>
-          </div>
-
-          {/* Action Toolbar */}
-          <div className="flex items-center gap-2">
-            {/* Real-Time Chat & Presence Toggle Button */}
-            <button
-              onClick={() => setIsChatOpen((prev) => !prev)}
-              className="btn-replit-secondary text-xs relative flex items-center gap-1.5"
-            >
-              <MessageSquare className="w-3.5 h-3.5 text-replit-orange" />
-              <span>Chat & Members</span>
-              {unreadCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full bg-replit-orange text-white text-[10px] font-bold font-mono">
-                  {unreadCount}
-                </span>
-              )}
-            </button>
-
-            {/* Real-Time Video Call Modal Toggle Button */}
-            <button
-              onClick={() => setIsVideoModalOpen(true)}
-              className="btn-replit-secondary text-xs relative flex items-center gap-1.5"
-            >
-              <Video className="w-3.5 h-3.5 text-replit-orange" />
-              <span>Video Call</span>
-              {isWebRtcCallActive && (
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
-              )}
-            </button>
-
-            {/* Copy Invite Link */}
-            <button
-              onClick={handleCopyInvite}
-              className="btn-replit-secondary text-xs relative"
-            >
-              {copied ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="text-emerald-400">Invitation Link Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3.5 h-3.5 text-replit-orange" />
-                  <span>Copy Invite Link</span>
-                </>
-              )}
-            </button>
-
-            {/* Leave Room */}
-            {!isOwner && (
-              <button
-                onClick={handleLeaveRoom}
-                disabled={isLeaving}
-                className="btn-replit-secondary text-xs text-red-400 border-red-500/20 hover:text-red-300"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                Leave Room
-              </button>
-            )}
-
-            {/* Delete Room (Owner Only) */}
-            {isOwner && (
-              <button
-                onClick={handleDeleteRoom}
-                disabled={isDeleting}
-                className="btn-replit-secondary text-xs text-red-400 border-red-500/30 hover:bg-red-500/20"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete Room
-              </button>
-            )}
-          </div>
+        <div className="ide-room-name">
+          <strong>{room.name}</strong>
+          <span>{room.id.slice(0, 12)}...</span>
+          <button
+            onClick={handleCopyLink}
+            title={copied ? 'Copied!' : 'Copy Room ID'}
+          >
+            {copied ? <Check size={14} color="#22c55e" /> : <Copy size={14} />}
+          </button>
         </div>
+
+        <LanguageDropdown
+          value={room.language}
+          onChange={handleLanguageChange}
+          disabled={currentRole === 'VIEWER'}
+          theme={theme}
+        />
+
+        <span className="ide-live">
+          <i /> Active
+        </span>
+
+        <div className="ide-toolbar-spacer" />
+
+        <button
+          className="ide-theme-toggle"
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? '☼' : '☾'}
+        </button>
+
+        <button
+          className="ide-invite-button"
+          onClick={handleCopyLink}
+        >
+          {copied ? <Check size={14} /> : <Plus size={14} />}
+          {copied ? 'Copied Link' : 'Invite link'}
+        </button>
+
+        <span className="ide-participants">
+          <i className="avatar purple">
+            {user.name.slice(0, 2).toUpperCase()}
+          </i>
+          {room.members && room.members.length > 1 && (
+            <i className="avatar blue">
+              {(room.members[1].user?.name || 'CO').slice(0, 2).toUpperCase()}
+            </i>
+          )}
+        </span>
+
+        <button
+          className="ide-tool"
+          onClick={() => setIsVideoModalOpen(true)}
+          style={isWebRtcCallActive ? { borderColor: 'rgba(34, 197, 94, 0.4)', color: '#22c55e' } : {}}
+        >
+          <Video size={15} /> Video call
+        </button>
+
+        <Link
+          className="ide-tool"
+          href={`/rooms/${room.id}/interview`}
+        >
+          <Bot size={15} /> Interview
+        </Link>
+
+        {isOwner && (
+          <button
+            className="ide-tool"
+            onClick={handleDeleteRoom}
+            disabled={isDeleting}
+            title="Delete Room (Owner)"
+            style={{ color: '#ef4444' }}
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
+
+        <button
+          className="ide-leave"
+          onClick={handleLeaveRoom}
+          disabled={isLeaving}
+        >
+          Leave room
+        </button>
       </header>
 
-      {/* Workspace Body */}
-      <main className="max-w-7xl mx-auto px-4 py-6 flex-1 w-full overflow-y-auto">
-        {/* Main Grid: Editor + Room Info Sidebar */}
-        <div className="flex-1 grid md:grid-cols-3 gap-6 min-h-[500px]">
-          {/* Real-Time Monaco Editor + Execution Console Container */}
-          <div className="md:col-span-2 flex flex-col space-y-4 min-h-0 min-w-0">
-            <RealtimeEditor
-              roomId={room.id}
-              language={room.language}
-              role={currentRole}
-              user={{ id: user.id, name: user.name }}
-              onSocketInit={(s) => setSocket(s)}
-              onPresenceUpdate={(users) => setPresenceUsers(users)}
-              onCodeGetterInit={(getter) => setCodeGetter(() => getter)}
-            />
-
-            <ExecutionConsole
-              roomId={room.id}
-              language={room.language}
-              role={currentRole}
-              codeGetter={codeGetter}
-              socket={socket}
-            />
-
-            {/* AI Pair Programmer Panel (Appears BELOW Output Console when activated) */}
-            {isAiPanelOpen && (
-              <AiAssistantPanel
-                roomId={room.id}
-                language={room.language}
-                role={currentRole}
-                codeGetter={codeGetter}
-                socket={socket}
-                onClose={() => setIsAiPanelOpen(false)}
-              />
-            )}
+      {/* 2. IDE Workspace */}
+      <div className="ide-workspace">
+        {/* Main Center Area */}
+        <main className="ide-center">
+          {/* Breadcrumb Header */}
+          <div className="ide-breadcrumb" style={{ background: theme === 'light' ? '#ffffff' : '#151719', borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.1))' }}>
+            <span style={{ color: theme === 'light' ? '#0f172a' : '#f8fafc', display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+              <FileCode size={14} color="#ff5c00" /> src
+            </span>
+            <ChevronDown size={14} style={{ color: theme === 'light' ? '#64748b' : '#94a3b8' }} />
+            <span style={{ color: theme === 'light' ? '#0f172a' : '#f8fafc', fontWeight: 700 }}>
+              {activeFile}
+            </span>
+            <div style={{ flex: 1 }} />
+            <button
+              onClick={() => {
+                if (codeGetter) {
+                  navigator.clipboard.writeText(codeGetter());
+                  setCopiedCode(true);
+                  setTimeout(() => setCopiedCode(false), 2000);
+                }
+              }}
+              style={{ color: theme === 'light' ? '#334155' : '#cbd5e1' }}
+            >
+              {copiedCode ? <Check size={13} color="#22c55e" /> : <Copy size={13} />} {copiedCode ? 'Copied' : 'Copy'}
+            </button>
+            <button
+              onClick={async () => {
+                const action = editorInstanceRef.current?.getAction('editor.action.formatDocument');
+                if (action) {
+                  await action.run();
+                  setFormatNotice('Formatted');
+                } else {
+                  setFormatNotice('No formatter for language');
+                }
+                setTimeout(() => setFormatNotice(null), 2000);
+              }}
+              style={{ color: theme === 'light' ? '#334155' : '#cbd5e1' }}
+            >
+              <Zap size={13} /> {formatNotice || 'Format'}
+            </button>
           </div>
 
-          {/* Room Info & Member List Sidebar */}
-          <div className="space-y-6">
-            {/* Room Metadata Card */}
-            <div className="card-replit p-5 space-y-3">
-              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
-                <div className="flex items-center gap-2 font-bold text-white text-sm">
-                  <Info className="w-4 h-4 text-replit-orange" />
-                  <span>Room Information</span>
+          {/* Editor Container */}
+          <div className="code-editor">
+            {/* File Tree Explorer (Collapsible) */}
+            {isExplorerOpen && (
+              <div
+                className="file-tree"
+                style={{
+                  background: theme === 'light' ? '#f8fafc' : '#141618',
+                  borderRight: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+                }}
+              >
+                <div
+                  className="file-tree-title"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    color: theme === 'light' ? '#64748b' : '#94a3b8',
+                  }}
+                >
+                  <span>EXPLORER</span>
+                  {currentRole !== 'VIEWER' && (
+                    <button
+                      onClick={() => {
+                        const name = prompt('Enter new file name:');
+                        const clean = name?.trim();
+                        if (clean && !files.includes(clean)) {
+                          const starter = getStarterCode(room.language);
+                          docApiRef.current?.addFile(clean, starter);
+                          setFiles([...files, clean]);
+                          setActiveFile(clean);
+                          setCurrentEditorCode(starter);
+                        }
+                      }}
+                      style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: '2px' }}
+                      title="New File"
+                    >
+                      +
+                    </button>
+                  )}
                 </div>
-                <span className="px-2 py-0.5 rounded bg-replit-orange/10 text-replit-orange border border-replit-orange/20 text-xs font-mono font-semibold uppercase">
-                  {currentRole}
-                </span>
-              </div>
-
-              <div className="space-y-2 text-xs font-mono text-text-muted">
-                <div className="flex justify-between">
-                  <span>Room ID:</span>
-                  <span className="text-white font-mono">{room.id.slice(0, 8)}...</span>
+                <div
+                  className="tree-item"
+                  onClick={() => setIsExplorerOpen(!isExplorerOpen)}
+                  style={{ color: theme === 'light' ? '#334155' : '#cbd5e1', fontWeight: 600 }}
+                >
+                  <ChevronDown size={14} /> src
                 </div>
-                <div className="flex justify-between">
-                  <span>Language:</span>
-                  <span className="text-white capitalize">{room.language}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Created:</span>
-                  <span className="text-white flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-text-muted" />
-                    {new Date(room.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Total Members:</span>
-                  <span className="text-white font-bold">{room.members?.length || 1}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Members List & Role Management Card */}
-            <div className="card-replit p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-border-subtle pb-3">
-                <div className="flex items-center gap-2 font-bold text-white text-sm">
-                  <Users className="w-4 h-4 text-replit-orange" />
-                  <span>Members ({room.members?.length || 0})</span>
-                </div>
-              </div>
-
-              <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
-                {room.members?.map((member) => {
-                  const isSelf = member.userId === user.id;
-                  const isMemberOwner = member.role === 'OWNER';
-
+                {files.map((file, idx) => {
+                  const isActive = activeFile === file;
                   return (
                     <div
-                      key={member.id}
-                      className="p-2.5 rounded bg-bg-secondary border border-border-subtle flex items-center justify-between gap-2"
+                      key={file}
+                      className={`tree-item ${isActive ? 'active' : ''}`}
+                      onClick={() => setActiveFile(file)}
+                      style={{
+                        cursor: 'pointer',
+                        color: isActive ? '#ff5c00' : theme === 'light' ? '#1e293b' : '#cbd5e1',
+                        background: isActive ? (theme === 'light' ? '#fff0e9' : 'rgba(255, 92, 0, 0.15)') : 'transparent',
+                        fontWeight: isActive ? 700 : 500,
+                        borderLeft: isActive ? '2px solid #ff5c00' : '2px solid transparent',
+                        padding: '6px 12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
                     >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="w-7 h-7 rounded-full bg-replit-orange/20 border border-replit-orange/30 text-replit-orange font-bold text-xs flex items-center justify-center font-mono shrink-0">
-                          {member.user?.name?.charAt(0).toUpperCase() || 'U'}
-                        </div>
-
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold text-white truncate flex items-center gap-1.5">
-                            <span className="truncate">{member.user?.name}</span>
-                            {isSelf && (
-                              <span className="text-[10px] text-text-muted font-normal font-mono">(You)</span>
-                            )}
-                          </div>
-                          <div className="text-[10px] text-text-muted truncate font-mono">
-                            {member.user?.email}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 shrink-0">
-                        {/* Role Selector (Owner Only) */}
-                        {isOwner && !isMemberOwner && !isSelf ? (
-                          <select
-                            value={member.role}
-                            disabled={updatingMemberId === member.userId}
-                            onChange={(e) => handleRoleChange(member.userId, e.target.value)}
-                            className="bg-bg-surface border border-border-subtle rounded text-[11px] font-mono text-white px-2 py-1 focus:outline-none focus:border-replit-orange cursor-pointer"
-                          >
-                            <option value="PARTICIPANT">PARTICIPANT</option>
-                            <option value="VIEWER">VIEWER</option>
-                          </select>
-                        ) : (
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase ${
-                              isMemberOwner
-                                ? 'bg-replit-orange text-white'
-                                : member.role === 'VIEWER'
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                                : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
-                            }`}
-                          >
-                            {member.role}
-                          </span>
-                        )}
-
-                        {/* Kick Member Button (Owner Only) */}
-                        {isOwner && !isMemberOwner && !isSelf && (
-                          <button
-                            onClick={() => handleRemoveMember(member.userId, member.user?.name || 'User')}
-                            className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-bg-surface transition-colors"
-                            title="Remove Member"
-                          >
-                            <UserX className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
+                      <FileCode size={14} color={isActive ? '#ff5c00' : theme === 'light' ? '#64748b' : '#94a3b8'} />
+                      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{file}</span>
+                      {idx > 0 && currentRole !== 'VIEWER' && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            docApiRef.current?.removeFile(file);
+                            const remaining = files.filter((f) => f !== file);
+                            setFiles(remaining);
+                            if (activeFile === file && remaining.length > 0) {
+                              setActiveFile(remaining[0]);
+                            }
+                          }}
+                          title="Delete File"
+                          style={{ background: 'none', border: 'none', color: 'inherit', opacity: 0.65, cursor: 'pointer', fontSize: '12px' }}
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
                   );
                 })}
               </div>
-            </div>
+            )}
 
-            {/* Room Workspace Card (Repositioned Chat & Online Members) */}
-            <div className="card-replit p-4">
-              <RoomChatPanel
-                roomId={room.id}
-                user={{ id: user.id, name: user.name }}
-                presenceUsers={presenceUsers}
-                socket={socket}
-                isOpen={isChatOpen}
-                onClose={() => setIsChatOpen(false)}
-                onUnreadCountChange={(count: number) => setUnreadCount(count)}
-              />
+            {/* Editor Main with Monaco */}
+            <div className="editor-main">
+              <div
+                className="editor-tabs"
+                style={{
+                  background: theme === 'light' ? '#ffffff' : '#141618',
+                  borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+                  display: 'flex',
+                  overflowX: 'auto',
+                }}
+              >
+                {files.map((file) => {
+                  const isActive = file === activeFile;
+                  return (
+                    <span
+                      key={file}
+                      onClick={() => setActiveFile(file)}
+                      data-active={isActive ? 'true' : 'false'}
+                      style={{
+                        cursor: 'pointer',
+                        color: isActive ? '#ff5c00' : theme === 'light' ? '#475569' : '#94a3b8',
+                        fontWeight: isActive ? 700 : 500,
+                        borderBottom: isActive ? '2px solid #ff5c00' : '2px solid transparent',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '8px 16px',
+                        background: isActive ? (theme === 'light' ? '#f1f5f9' : 'rgba(255, 92, 0, 0.08)') : 'transparent',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <FileCode size={14} color={isActive ? '#ff5c00' : theme === 'light' ? '#94a3b8' : '#64748b'} /> {file}
+                    </span>
+                  );
+                })}
+              </div>
+
+              {/* Non-blocking Language Mismatch Warning Banner */}
+              {(() => {
+                const mismatchInfo = checkLanguageMismatch(currentEditorCode, room.language);
+                const isMismatchDismissed = dismissedMismatchKey === `${room.language}:${activeFile}`;
+                if (!mismatchInfo.isMismatch || isMismatchDismissed) return null;
+
+                return (
+                  <div
+                    role="status"
+                    data-testid="language-mismatch-banner"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 14px',
+                      fontSize: '12px',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                      background: theme === 'light' ? '#fff7ed' : 'rgba(249, 115, 22, 0.12)',
+                      borderBottom: '1px solid ' + (theme === 'light' ? '#fed7aa' : 'rgba(249, 115, 22, 0.25)'),
+                      color: theme === 'light' ? '#c2410c' : '#fb923c',
+                      zIndex: 10,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <AlertTriangle size={15} style={{ flexShrink: 0, color: '#f97316' }} />
+                      <span>
+                        Active file contains <strong>{getLanguageDisplay(mismatchInfo.detectedLanguage || '')}</strong> code, while the room language is set to <strong>{getLanguageDisplay(room.language)}</strong>. Existing code is preserved.
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (confirm(`Replace editor content with starter template for ${getLanguageDisplay(room.language)}?`)) {
+                            const starter = getStarterCode(room.language);
+                            docApiRef.current?.setActiveFileContent?.(starter);
+                            setCurrentEditorCode(starter);
+                          }
+                        }}
+                        style={{
+                          background: theme === 'light' ? '#fed7aa' : 'rgba(249, 115, 22, 0.2)',
+                          border: '1px solid ' + (theme === 'light' ? '#fdba74' : 'rgba(249, 115, 22, 0.4)'),
+                          color: theme === 'light' ? '#9a3412' : '#fdba74',
+                          borderRadius: '4px',
+                          padding: '2px 8px',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Use {getLanguageDisplay(room.language)} Template
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDismissedMismatchKey(`${room.language}:${activeFile}`)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: 'inherit',
+                          cursor: 'pointer',
+                          padding: '2px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          opacity: 0.75,
+                        }}
+                        title="Dismiss warning"
+                        aria-label="Dismiss language mismatch warning"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Monaco Editor Container with Yjs Collaboration */}
+              <div key={activeFile} style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+                <RealtimeEditor
+                  key={activeFile}
+                  roomId={room.id}
+                  language={getLanguageForFilename(activeFile) || room.language}
+                  role={currentRole}
+                  user={stableUser}
+                  activeFile={activeFile}
+                  primaryFile={files[0]}
+                  workspaceFiles={files}
+                  onWorkspaceFilesSync={handleWorkspaceFilesSync}
+                  onLanguageUpdate={handleLanguageUpdate}
+                  onDocInit={handleDocInit}
+                  onEditorMount={handleEditorMount}
+                  onCodeChange={handleCodeChange}
+                  onSocketInit={handleSocketInit}
+                  onPresenceUpdate={handlePresenceUpdate}
+                  onRoleUpdate={handleRoleUpdate}
+                  onCodeGetterInit={handleCodeGetterInit}
+                />
+              </div>
+
+              {/* Editor Footer */}
+              <div className="editor-footer">
+                <span>{getLanguageDisplay(getLanguageForFilename(activeFile) || room.language)}</span>
+                <span>
+                  <i className="sync-dot" /> Synced
+                </span>
+                <span>{currentRole}</span>
+              </div>
             </div>
           </div>
-        </div>
-      </main>
 
-      {/* Bottom-Right Floating AI Pair Programmer Button */}
-      <button
-        onClick={() => setIsAiPanelOpen((prev) => !prev)}
-        className="fixed bottom-6 right-6 z-40 w-13 h-13 rounded-full bg-[#1c1f2b] border-2 border-replit-orange text-replit-orange hover:bg-replit-orange hover:text-white shadow-2xl transition-all duration-200 flex items-center justify-center group active:scale-95"
-        title="AI Pair Programmer"
-        aria-label="Toggle AI Pair Programmer Panel"
-      >
-        <Sparkles className="w-6 h-6 animate-pulse group-hover:animate-none" />
-      </button>
+          {/* Docker Output Console */}
+          <div style={{ flexShrink: 0, marginTop: '0' }}>
+            <ExecutionConsole
+              roomId={room.id}
+              language={getLanguageForFilename(activeFile) || room.language}
+              role={currentRole}
+              codeGetter={codeGetter}
+              socket={socket}
+            />
+          </div>
+        </main>
 
-      {/* WebRTC Video Call Floating Modal */}
-      <RoomVideoPanel
-        isOpen={isVideoModalOpen}
-        onClose={() => setIsVideoModalOpen(false)}
-        roomId={room.id}
-        user={{ id: user.id, name: user.name }}
-        role={currentRole}
-        socket={socket}
-        onCallStateChange={(active) => setIsWebRtcCallActive(active)}
-      />
+        {/* Right Sidebar: Members / Chat / AI Assistant */}
+        <aside className="room-sidebar" style={{ background: theme === 'light' ? '#ffffff' : undefined }}>
+          <div className="room-sidebar-tabs" style={{ background: theme === 'light' ? '#ffffff' : undefined }}>
+            <button
+              className={sidebarTab === 'members' ? 'active' : ''}
+              onClick={() => setSidebarTab('members')}
+              style={{
+                color: sidebarTab === 'members' ? '#ff5c00' : theme === 'light' ? '#334155' : '#94a3b8',
+                fontWeight: sidebarTab === 'members' ? 700 : 500,
+                borderBottom: sidebarTab === 'members' ? '2px solid #ff5c00' : 'none',
+              }}
+            >
+              <Users size={15} /> Members
+            </button>
+            <button
+              className={sidebarTab === 'chat' ? 'active' : ''}
+              onClick={() => setSidebarTab('chat')}
+              style={{
+                color: sidebarTab === 'chat' ? '#ff5c00' : theme === 'light' ? '#334155' : '#94a3b8',
+                fontWeight: sidebarTab === 'chat' ? 700 : 500,
+                borderBottom: sidebarTab === 'chat' ? '2px solid #ff5c00' : 'none',
+              }}
+            >
+              <MessageSquare size={15} /> Chat
+              {unreadCount > 0 && <span className="nav-plus">{unreadCount}</span>}
+            </button>
+            <button
+              className={sidebarTab === 'assistant' ? 'active' : ''}
+              onClick={() => setSidebarTab('assistant')}
+              style={{
+                color: sidebarTab === 'assistant' ? '#ff5c00' : theme === 'light' ? '#334155' : '#94a3b8',
+                fontWeight: sidebarTab === 'assistant' ? 700 : 500,
+                borderBottom: sidebarTab === 'assistant' ? '2px solid #ff5c00' : 'none',
+              }}
+            >
+              <Sparkles size={15} /> AI Assistant
+            </button>
+          </div>
+
+          {/* Tab 1: Members View */}
+          {sidebarTab === 'members' && (
+            <div className="members-view" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+              <div className="sidebar-section-title">
+                IN THIS ROOM <span>{onlineCount} online</span>
+              </div>
+
+              {/* Current user */}
+              <div className="member-row">
+                <span className="avatar orange">
+                  {user.name.slice(0, 2).toUpperCase()}
+                </span>
+                <div>
+                  <strong>{user.name} (You)</strong>
+                  <small>Editing {activeFile}</small>
+                </div>
+                <span className={`role ${currentRole.toLowerCase()}`}>
+                  {currentRole}
+                </span>
+              </div>
+
+              {/* Other members */}
+              {room.members
+                ?.filter((m) => m.userId !== user.id)
+                .map((member) => {
+                  const roleClass = (member.role || 'PARTICIPANT').toLowerCase();
+                  const mName = member.user?.name || 'Collaborator';
+                  const isOnline = presenceUsers.some((p) => p.userId === member.userId);
+                  return (
+                    <div key={member.id} className="member-row">
+                      <span className="avatar purple">
+                        {mName.slice(0, 2).toUpperCase()}
+                      </span>
+                      <div>
+                        <strong>{mName}</strong>
+                        <small>{isOnline ? 'Collaborating (Online)' : 'Offline'}</small>
+                      </div>
+                      <span className={`role ${roleClass}`}>
+                        {member.role}
+                      </span>
+                      {isOwner && (
+                        <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto' }}>
+                          <select
+                            value={member.role}
+                            onChange={(e) => handleRoleChange(member.userId, e.target.value)}
+                            disabled={updatingMemberId === member.userId}
+                            style={{
+                              fontSize: '11px',
+                              padding: '2px 4px',
+                              borderRadius: '4px',
+                              background: 'var(--bg-surface, rgba(255,255,255,0.05))',
+                              border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
+                              color: 'inherit',
+                            }}
+                          >
+                            <option value="PARTICIPANT">PARTICIPANT</option>
+                            <option value="VIEWER">VIEWER</option>
+                          </select>
+                          <button
+                            onClick={() => handleRemoveMember(member.userId, mName)}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#ef4444',
+                              cursor: 'pointer',
+                              padding: '2px',
+                            }}
+                            title="Remove Member"
+                          >
+                            <UserX size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+
+          {/* Tab 2: Chat View */}
+          {sidebarTab === 'chat' && (
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+              <RoomChatPanel
+                roomId={room.id}
+                socket={socket}
+                user={{ id: user.id, name: user.name }}
+                isOpen={true}
+                onClose={() => setSidebarTab('members')}
+                onUnreadCountChange={(count: number) => setUnreadCount(count)}
+                presenceUsers={presenceUsers}
+              />
+            </div>
+          )}
+
+          {/* Tab 3: AI Assistant View */}
+          {sidebarTab === 'assistant' && (
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+              <AiAssistantPanel
+                roomId={room.id}
+                language={getLanguageForFilename(activeFile) || room.language}
+                role={currentRole}
+                codeGetter={codeGetter}
+                socket={socket}
+              />
+            </div>
+          )}
+        </aside>
+      </div>
+
+      {/* Video Call Modal */}
+      {isVideoModalOpen && (
+        <RoomVideoPanel
+          isOpen={isVideoModalOpen}
+          roomId={room.id}
+          user={{ id: user.id, name: user.name }}
+          role={currentRole}
+          socket={socket}
+          onClose={() => setIsVideoModalOpen(false)}
+          onCallStateChange={(active: boolean) => setIsWebRtcCallActive(active)}
+        />
+      )}
     </div>
   );
 }

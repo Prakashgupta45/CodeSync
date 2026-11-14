@@ -9,6 +9,8 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces",
+    "dev:admin": "npm run dev --workspace=@codesync/admin",
+    "build:admin": "npm run build --workspace=@codesync/admin",
     "test": "npm run test --workspace=apps/backend",
     "type-check": "npm run type-check --workspaces",
     "lint": "npm run lint --workspaces"

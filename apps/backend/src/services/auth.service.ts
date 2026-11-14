@@ -12,6 +12,7 @@ export class AuthService {
       email: user.email,
       name: user.name,
       role: user.role,
+      status: user.status || 'ACTIVE',
       avatarUrl: user.avatarUrl,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),
@@ -55,6 +56,10 @@ export class AuthService {
       throw new AppError('Invalid email or password', 401, 'INVALID_CREDENTIALS');
     }
 
+    if (user.status === 'SUSPENDED') {
+      throw new AppError('Your account has been suspended. Please contact an administrator.', 403, 'ACCOUNT_SUSPENDED');
+    }
+
     const isPasswordValid = await bcrypt.compare(input.password, user.passwordHash);
 
     if (!isPasswordValid) {
@@ -85,17 +90,32 @@ export class AuthService {
       throw new AppError('User associated with token no longer exists', 401, 'USER_NOT_FOUND');
     }
 
-    // Find refresh tokens for this user
-    const userTokens = await prisma.refreshToken.findMany({
-      where: { userId: user.id },
-    });
+    if (user.status === 'SUSPENDED') {
+      throw new AppError('Your account has been suspended.', 403, 'ACCOUNT_SUSPENDED');
+    }
 
+    // Targeted O(1) indexed lookup by tokenId when available; fallback scoped strictly to userId
     let matchedTokenRecord = null;
-    for (const record of userTokens) {
-      const isMatch = await bcrypt.compare(rawRefreshToken, record.hashedToken);
-      if (isMatch) {
-        matchedTokenRecord = record;
-        break;
+    if (payload.tokenId) {
+      const candidate = await prisma.refreshToken.findUnique({
+        where: { id: payload.tokenId },
+      });
+      if (candidate && candidate.userId === user.id) {
+        const isMatch = await bcrypt.compare(rawRefreshToken, candidate.hashedToken);
+        if (isMatch) {
+          matchedTokenRecord = candidate;
+        }
+      }
+    } else {
+      const userTokens = await prisma.refreshToken.findMany({
+        where: { userId: user.id },
+      });
+      for (const record of userTokens) {
+        const isMatch = await bcrypt.compare(rawRefreshToken, record.hashedToken);
+        if (isMatch) {
+          matchedTokenRecord = record;
+          break;
+        }
       }
     }
 
@@ -143,26 +163,36 @@ export class AuthService {
   }
 
   public async logout(rawRefreshToken?: string, userId?: string) {
-    if (rawRefreshToken) {
-      const userTokens = await prisma.refreshToken.findMany({
-        where: { isRevoked: false },
-      });
+    let resolvedUserId = userId;
 
-      for (const record of userTokens) {
-        const isMatch = await bcrypt.compare(rawRefreshToken, record.hashedToken);
-        if (isMatch) {
-          await prisma.refreshToken.update({
-            where: { id: record.id },
-            data: { isRevoked: true },
-          });
-          break;
+    if (rawRefreshToken) {
+      try {
+        const payload = verifyRefreshToken(rawRefreshToken);
+        if (!resolvedUserId && payload.userId) {
+          resolvedUserId = payload.userId;
         }
+        if (payload.tokenId) {
+          const record = await prisma.refreshToken.findUnique({
+            where: { id: payload.tokenId },
+          });
+          if (record && !record.isRevoked) {
+            const isMatch = await bcrypt.compare(rawRefreshToken, record.hashedToken);
+            if (isMatch) {
+              await prisma.refreshToken.update({
+                where: { id: record.id },
+                data: { isRevoked: true },
+              });
+            }
+          }
+        }
+      } catch {
+        // Invalid or expired refresh token — cookies will still be cleared
       }
     }
 
-    if (userId) {
+    if (resolvedUserId) {
       await prisma.refreshToken.updateMany({
-        where: { userId, isRevoked: false },
+        where: { userId: resolvedUserId, isRevoked: false },
         data: { isRevoked: true },
       });
     }

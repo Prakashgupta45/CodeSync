@@ -20,20 +20,95 @@ export class CollaborationService {
   }
 
   private getDefaultStarterCode(language: string, roomName?: string): string {
-    const lang = (language || '').toLowerCase();
+    const lang = (language || '').toLowerCase().trim();
 
     switch (lang) {
-      case 'python':
-        return `# CodeSync AI - ${roomName || 'Python Workspace'}\n\ndef main():\n    print("Hello, CodeSync AI!")\n\nif __name__ == "__main__":\n    main()\n`;
+      case 'c':
+        return `// CodeSync AI - ${roomName || 'C Workspace'}
+#include <stdio.h>
+
+int main() {
+    printf("Hello, CodeSync AI!\\n");
+    return 0;
+}
+`;
       case 'cpp':
-        return `// CodeSync AI - ${roomName || 'C++ Workspace'}\n#include <iostream>\n\nint main() {\n    std::cout << "Hello, CodeSync AI!" << std::endl;\n    return 0;\n}\n`;
+      case 'c++':
+        return `// CodeSync AI - ${roomName || 'C++ Workspace'}
+#include <iostream>
+
+int main() {
+    std::cout << "Hello, CodeSync AI!" << std::endl;
+    return 0;
+}
+`;
       case 'java':
-        return `// CodeSync AI - ${roomName || 'Java Workspace'}\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello, CodeSync AI!");\n    }\n}\n`;
+        return `// CodeSync AI - ${roomName || 'Java Workspace'}
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello, CodeSync AI!");
+    }
+}
+`;
+      case 'python':
+      case 'py':
+        return `# CodeSync AI - ${roomName || 'Python Workspace'}
+
+def main():
+    print("Hello, CodeSync AI!")
+
+if __name__ == "__main__":
+    main()
+`;
       case 'typescript':
-        return `// CodeSync AI - ${roomName || 'TypeScript Workspace'}\nfunction greeting(name: string): string {\n    return \`Hello, \${name}!\`;\n}\n\nconsole.log(greeting("CodeSync AI"));\n`;
+      case 'ts':
+        return `// CodeSync AI - ${roomName || 'TypeScript Workspace'}
+function greeting(name: string): string {
+    return \`Hello, \${name}!\`;
+}
+
+console.log(greeting("CodeSync AI"));
+`;
+      case 'go':
+      case 'golang':
+        return `// CodeSync AI - ${roomName || 'Go Workspace'}
+package main
+
+import "fmt"
+
+func main() {
+    fmt.Println("Hello, CodeSync AI!")
+}
+`;
+      case 'rust':
+      case 'rs':
+        return `// CodeSync AI - ${roomName || 'Rust Workspace'}
+fn main() {
+    println!("Hello, CodeSync AI!");
+}
+`;
+      case 'csharp':
+      case 'c#':
+      case 'cs':
+        return `// CodeSync AI - ${roomName || 'C# Workspace'}
+using System;
+
+class Program {
+    static void Main() {
+        Console.WriteLine("Hello, CodeSync AI!");
+    }
+}
+`;
       case 'javascript':
+      case 'js':
       default:
-        return `// CodeSync AI - ${roomName || 'JavaScript Workspace'}\nfunction main() {\n    console.log("Hello, CodeSync AI!");\n}\n\nmain();\n`;
+        return `// CodeSync AI - ${roomName || 'JavaScript Workspace'}
+function main() {
+    console.log("Hello, CodeSync AI!");
+}
+
+main();
+`;
     }
   }
 
@@ -162,9 +237,21 @@ export class CollaborationService {
           state: Buffer.from(update),
         },
       });
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.code === 'P2003' || err?.message?.includes('Foreign key constraint')) {
+        // Room was deleted concurrently during test teardown
+        return;
+      }
       console.error(`Failed to save room document for room ${roomId}:`, err);
     }
+  }
+
+  public async flushAllDocuments(): Promise<void> {
+    const promises: Promise<any>[] = [];
+    for (const [roomId] of this.sessions.entries()) {
+      promises.push(this.saveRoomDocument(roomId));
+    }
+    await Promise.all(promises);
   }
 }
 

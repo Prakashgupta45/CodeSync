@@ -10,7 +10,8 @@ export class ExecutionService {
     roomId: string,
     userId: string,
     inputLanguage?: string,
-    inputCode?: string
+    inputCode?: string,
+    verifiedCandidateRoomId?: string
   ): Promise<RoomExecutionResultDto> {
     // 1. Verify Room and Database Membership with User details
     const room = await prisma.room.findUnique({
@@ -29,26 +30,56 @@ export class ExecutionService {
       },
     });
 
-    if (!room) {
-      throw new AppError('Coding room not found', 404, 'ROOM_NOT_FOUND');
-    }
+    let executor = {
+      userId,
+      name: 'Candidate',
+      role: 'PARTICIPANT' as 'OWNER' | 'PARTICIPANT' | 'VIEWER',
+    };
+    let language = inputLanguage || 'typescript';
+    let code = inputCode ?? '';
 
-    const member = room.members.find((m) => m.userId === userId);
-    if (!member) {
-      throw new AppError('You are not a member of this room and cannot execute code', 403, 'FORBIDDEN');
-    }
+    const isValidCandidateInterview = Boolean(
+      verifiedCandidateRoomId &&
+        verifiedCandidateRoomId === roomId &&
+        userId === 'candidate-user'
+    );
 
-    // Security Authorization Guard: VIEWER role cannot execute code
-    if (member.role === 'VIEWER') {
-      throw new AppError('Viewers have read-only access and cannot execute code', 403, 'FORBIDDEN');
-    }
+    if (room) {
+      const member = room.members.find((m) => m.userId === userId);
+      if (!member) {
+        if (isValidCandidateInterview) {
+          executor = {
+            userId,
+            name: 'Candidate',
+            role: 'PARTICIPANT',
+          };
+        } else {
+          throw new AppError('You are not a member of this room and cannot execute code', 403, 'FORBIDDEN');
+        }
+      } else {
+        // Security Authorization Guard: VIEWER role cannot execute code
+        if (member.role === 'VIEWER') {
+          throw new AppError('Viewers have read-only access and cannot execute code', 403, 'FORBIDDEN');
+        }
 
-    const language = inputLanguage || room.language;
-    // Fall back to room document content if inputCode is undefined, null, or empty string
-    const code =
-      inputCode !== undefined && inputCode !== null && inputCode.trim().length > 0
-        ? inputCode
-        : room.document?.content || '';
+        executor = {
+          userId: member.user.id,
+          name: member.user.name,
+          role: member.role,
+        };
+      }
+      language = inputLanguage || room.language;
+      code =
+        inputCode !== undefined && inputCode !== null && inputCode.trim().length > 0
+          ? inputCode
+          : room.document?.content || '';
+    } else {
+      if (!isValidCandidateInterview) {
+        throw new AppError('Coding room not found', 404, 'ROOM_NOT_FOUND');
+      }
+      language = inputLanguage || 'typescript';
+      code = inputCode || '';
+    }
 
     // 2. Validate input schema with Zod
     const validationResult = executeCodeSchema.safeParse({
@@ -74,9 +105,9 @@ export class ExecutionService {
       roomId,
       executionId: randomUUID(),
       executedBy: {
-        userId: member.user.id,
-        name: member.user.name,
-        role: member.role,
+        userId: executor.userId,
+        name: executor.name,
+        role: executor.role,
       },
       language: validationResult.data.language,
       timestamp: new Date().toISOString(),

@@ -22,6 +22,110 @@ export interface RemoteParticipantStream {
   stream: MediaStream | null;
 }
 
+function createFallbackStream(userName: string): MediaStream {
+  if (typeof document === 'undefined') return new MediaStream();
+  const canvas = document.createElement('canvas');
+  canvas.width = 640;
+  canvas.height = 360;
+  const ctx = canvas.getContext('2d');
+
+  let pulse = 0;
+  let pulseForward = true;
+
+  const draw = () => {
+    if (!ctx) return;
+    if (pulseForward) {
+      pulse += 0.05;
+      if (pulse >= 1) pulseForward = false;
+    } else {
+      pulse -= 0.05;
+      if (pulse <= 0) pulseForward = true;
+    }
+
+    // Background
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const cx = canvas.width / 2;
+    const cy = canvas.height / 2 - 20;
+
+    // Pulse ring
+    ctx.beginPath();
+    ctx.arc(cx, cy, 60 + pulse * 10, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(255, 92, 0, ${0.15 + pulse * 0.1})`;
+    ctx.fill();
+
+    // Avatar Circle
+    ctx.beginPath();
+    ctx.arc(cx, cy, 52, 0, Math.PI * 2);
+    ctx.fillStyle = '#ff5c00';
+    ctx.fill();
+
+    // User Initials
+    const initials =
+      userName
+        .split(' ')
+        .map((w) => w[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase() || 'U';
+    ctx.font = 'bold 36px monospace';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(initials, cx, cy);
+
+    // User Name
+    ctx.font = '600 18px sans-serif';
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(userName, cx, cy + 85);
+
+    // Badge
+    ctx.font = '12px monospace';
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText('• Live Stream (Virtual Feed)', cx, cy + 110);
+  };
+
+  draw();
+  const interval = setInterval(draw, 100);
+
+  const videoStream = (canvas as any).captureStream
+    ? (canvas as any).captureStream(20)
+    : (canvas as any).mozCaptureStream(20);
+  const videoTrack = videoStream.getVideoTracks()[0];
+
+  if (videoTrack) {
+    const origStop = videoTrack.stop.bind(videoTrack);
+    videoTrack.stop = () => {
+      clearInterval(interval);
+      origStop();
+    };
+  }
+
+  // Silent audio track fallback
+  let audioTrack: MediaStreamTrack | null = null;
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (AudioContextClass) {
+      const audioCtx = new AudioContextClass();
+      const osc = audioCtx.createOscillator();
+      const dst = audioCtx.createMediaStreamDestination();
+      const gain = audioCtx.createGain();
+      gain.gain.value = 0;
+      osc.connect(gain);
+      gain.connect(dst);
+      osc.start();
+      audioTrack = dst.stream.getAudioTracks()[0];
+    }
+  } catch {}
+
+  const tracks: MediaStreamTrack[] = [];
+  if (videoTrack) tracks.push(videoTrack);
+  if (audioTrack) tracks.push(audioTrack);
+
+  return new MediaStream(tracks);
+}
+
 export function useWebRTC(
   roomId: string,
   user: { id: string; name: string },
@@ -306,9 +410,20 @@ export function useWebRTC(
             audio: true,
           });
         } catch (mediaErr: any) {
-          setError('Unable to access camera/microphone. Please check browser permissions.');
-          setIsJoining(false);
-          return;
+          console.warn('Physical camera/mic access failed (likely in use by another tab/window), attempting graceful fallback:', mediaErr);
+          try {
+            // Try audio-only first, then attach virtual canvas video
+            const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+            const fallbackStream = createFallbackStream(user.name);
+            const aTrack = audioStream.getAudioTracks()[0];
+            if (aTrack) {
+              fallbackStream.addTrack(aTrack);
+            }
+            stream = fallbackStream;
+          } catch (audioErr) {
+            console.warn('Audio capture also unavailable, using virtual media stream for multi-browser testing:', audioErr);
+            stream = createFallbackStream(user.name);
+          }
         }
       }
 

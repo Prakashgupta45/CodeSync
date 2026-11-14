@@ -3,6 +3,7 @@ export interface UserDto {
   email: string;
   name: string;
   role: 'USER' | 'ADMIN';
+  status?: string;
   avatarUrl?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -21,7 +22,7 @@ export interface ApiResponse<T = any> {
 
 export interface AuthResponseData {
   user: UserDto;
-  accessToken: string;
+  accessToken?: string;
 }
 
 export type RoomRole = 'OWNER' | 'PARTICIPANT' | 'VIEWER';
@@ -147,4 +148,77 @@ export interface CallMediaStatePayload {
   roomId: string;
   cameraEnabled: boolean;
   microphoneEnabled: boolean;
+}
+
+export type InterviewActionType =
+  | 'START_INTERVIEW'
+  | 'ASK_APPROACH'
+  | 'ANALYZE_CODE'
+  | 'ASK_COMPLEXITY'
+  | 'DEBUG_ERROR'
+  | 'FOLLOW_UP'
+  | 'EVALUATE'
+  | 'FINAL_REPORT';
+
+export interface ProblemDto {
+  id: string;
+  title: string;
+  description: string;
+  difficulty: string;
+  constraints?: string | null;
+  examples: any[];
+  expectedInput?: string | null;
+  expectedOutput?: string | null;
+  starterCode?: string | null;
+}
+
+export interface InterviewMessageDto {
+  id: string;
+  interviewId: string;
+  senderType: 'AI_INTERVIEWER' | 'CANDIDATE';
+  senderId: string | null;
+  senderName: string;
+  content: string;
+  action?: InterviewActionType | null;
+  createdAt: string;
+}
+
+export interface InterviewReportDto {
+  id?: string;
+  interviewId: string;
+  overallScore: number;
+  problemSolvingScore: number;
+  algorithmScore: number;
+  codeQualityScore: number;
+  debuggingScore: number;
+  complexityScore: number;
+  communicationScore: number;
+  strengths: string[];
+  weaknesses: string[];
+  improvements: string[];
+  importantEvents: string[];
+  assessment: string;
+  recommendedNextSteps: string;
+  createdAt?: string;
+}
+
+export interface InterviewDto {
+  id: string;
+  roomId: string;
+  ownerId: string;
+  candidateId: string;
+  candidateName: string | null;
+  problemId?: string | null;
+  problem?: ProblemDto | null;
+  title: string;
+  status: 'READY' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+  language: string;
+  duration: number;
+  instructions?: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messages?: InterviewMessageDto[];
+  report?: InterviewReportDto | null;
 }

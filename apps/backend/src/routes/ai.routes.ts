@@ -1,10 +1,10 @@
 import { Router } from 'express';
-import { authenticateToken } from '../middleware/auth.middleware';
+import { authenticateRoomOrCandidate } from '../middleware/auth.middleware';
 import { aiController } from '../controllers/ai.controller';
 
 const router = Router({ mergeParams: true });
 
-router.use(authenticateToken);
+router.use(authenticateRoomOrCandidate);
 
 // AI Actions endpoints
 router.post('/prompt', aiController.promptAi);

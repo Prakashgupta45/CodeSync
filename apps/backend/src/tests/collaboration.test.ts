@@ -77,6 +77,11 @@ describe('Real-Time Collaboration & Socket.IO Authorization Security Suite', () 
     return arr.map((c: string) => c.split(';')[0]);
   };
 
+  afterEach(async () => {
+    collaborationService.clearSessions();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+
   beforeEach(async () => {
     collaborationService.clearSessions();
     await prisma.roomDocument.deleteMany({});
@@ -300,5 +305,198 @@ describe('Real-Time Collaboration & Socket.IO Authorization Security Suite', () 
     expect(docInDb).toBeDefined();
     expect(docInDb?.roomId).toBe(testRoomId);
     expect(docInDb?.content).toContain('Realtime Test Room');
+  });
+
+  it('10. Joining a room emits room:members-updated to connected room owner', async () => {
+    const ownerSocket = createSocketClient(ownerCookie);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ownerSocket.on('connect_error', reject);
+        ownerSocket.on('collaboration:sync', () => resolve());
+        ownerSocket.on('connect', () => {
+          ownerSocket.emit('collaboration:join', { roomId: testRoomId });
+        });
+      });
+
+      const membersUpdatedPromise = new Promise<any>((resolve) => {
+        ownerSocket.once('room:members-updated', (payload) => resolve(payload));
+      });
+
+      const joinRes = await request(app)
+        .post(`/api/v1/rooms/${testRoomId}/join`)
+        .set('Cookie', nonMemberCookie);
+
+      expect(joinRes.status).toBe(200);
+
+      const eventPayload = await membersUpdatedPromise;
+      expect(eventPayload.roomId).toBe(testRoomId);
+      expect(eventPayload.action).toBe('joined');
+      expect(eventPayload.userId).toBeTruthy();
+    } finally {
+      ownerSocket.disconnect();
+    }
+  });
+
+  it('11. Live role update synchronizes open sockets, presence, and edit/execute enforcement without reconnect', async () => {
+    const ownerSocket = createSocketClient(ownerCookie);
+    const participantSocket = createSocketClient(participantCookie);
+
+    try {
+      await Promise.all([
+        new Promise<void>((resolve, reject) => {
+          ownerSocket.on('connect_error', reject);
+          ownerSocket.once('collaboration:sync', () => resolve());
+          ownerSocket.on('connect', () => {
+            ownerSocket.emit('collaboration:join', { roomId: testRoomId });
+          });
+        }),
+        new Promise<void>((resolve, reject) => {
+          participantSocket.on('connect_error', reject);
+          participantSocket.once('collaboration:sync', (syncData) => {
+            expect(syncData.role).toBe('PARTICIPANT');
+            resolve();
+          });
+          participantSocket.on('connect', () => {
+            participantSocket.emit('collaboration:join', { roomId: testRoomId });
+          });
+        }),
+      ]);
+
+      // Demote live PARTICIPANT -> VIEWER
+      const demoteRolePromise = new Promise<any>((resolve) => {
+        participantSocket.once('room:role-updated', (payload) => resolve(payload));
+      });
+      const demotePresencePromise = new Promise<any>((resolve) => {
+        const onPresence = (payload: any) => {
+          const target = payload?.users?.find((u: any) => u.userId === participantUserId);
+          if (target?.role === 'VIEWER') {
+            ownerSocket.off('presence:update', onPresence);
+            resolve(payload);
+          }
+        };
+        ownerSocket.on('presence:update', onPresence);
+      });
+
+      const demoteRes = await request(app)
+        .patch(`/api/v1/rooms/${testRoomId}/members/${participantUserId}/role`)
+        .set('Cookie', ownerCookie)
+        .send({ role: 'VIEWER' });
+
+      expect(demoteRes.status).toBe(200);
+      expect(demoteRes.body.data.role).toBe('VIEWER');
+
+      const [demoteEvent, demotePresence] = await Promise.all([
+        demoteRolePromise,
+        demotePresencePromise,
+      ]);
+      expect(demoteEvent).toMatchObject({
+        roomId: testRoomId,
+        userId: participantUserId,
+        role: 'VIEWER',
+      });
+      expect(
+        demotePresence.users.find((u: any) => u.userId === participantUserId)?.role
+      ).toBe('VIEWER');
+
+      // Open socket must now be blocked from emitting collaboration:update
+      const editBlockedPromise = new Promise<any>((resolve) => {
+        participantSocket.once('collaboration:error', (err) => resolve(err));
+      });
+      participantSocket.emit('collaboration:update', {
+        roomId: testRoomId,
+        update: Array.from(new Uint8Array([1, 2, 3])),
+      });
+      const editBlockedErr = await editBlockedPromise;
+      expect(editBlockedErr.message).toBe('Viewers have read-only access and cannot edit');
+
+      // Backend REST execute must also reject demoted VIEWER with 403
+      const execBlockedRes = await request(app)
+        .post(`/api/v1/rooms/${testRoomId}/execute`)
+        .set('Cookie', participantCookie)
+        .send({ code: 'console.log(1)', language: 'javascript' });
+      expect(execBlockedRes.status).toBe(403);
+
+      // Promote live VIEWER -> PARTICIPANT on the same socket without reconnect
+      const promoteRolePromise = new Promise<any>((resolve) => {
+        participantSocket.once('room:role-updated', (payload) => resolve(payload));
+      });
+      const promoteRes = await request(app)
+        .patch(`/api/v1/rooms/${testRoomId}/members/${participantUserId}/role`)
+        .set('Cookie', ownerCookie)
+        .send({ role: 'PARTICIPANT' });
+
+      expect(promoteRes.status).toBe(200);
+      const promoteEvent = await promoteRolePromise;
+      expect(promoteEvent.role).toBe('PARTICIPANT');
+
+      // Open socket can now submit a real Yjs update and owner receives it
+      const ownerReceivedUpdate = new Promise<any>((resolve) => {
+        ownerSocket.once('collaboration:update', (payload) => resolve(payload));
+      });
+      const testDoc = new Y.Doc();
+      testDoc.getText('codemirror').insert(0, '// Restored Participant Edit\n');
+      participantSocket.emit('collaboration:update', {
+        roomId: testRoomId,
+        update: Array.from(Y.encodeStateAsUpdate(testDoc)),
+      });
+      const relayedUpdate = await ownerReceivedUpdate;
+      expect(relayedUpdate.roomId).toBe(testRoomId);
+    } finally {
+      ownerSocket.disconnect();
+      participantSocket.disconnect();
+    }
+  });
+
+  it('12. Reconnecting socket after role update receives latest authoritative role in collaboration:sync', async () => {
+    await request(app)
+      .patch(`/api/v1/rooms/${testRoomId}/members/${participantUserId}/role`)
+      .set('Cookie', ownerCookie)
+      .send({ role: 'VIEWER' });
+
+    const reconnectedSocket = createSocketClient(participantCookie);
+    try {
+      const syncData = await new Promise<any>((resolve, reject) => {
+        reconnectedSocket.on('connect_error', reject);
+        reconnectedSocket.once('collaboration:sync', (data) => resolve(data));
+        reconnectedSocket.on('connect', () => {
+          reconnectedSocket.emit('collaboration:join', { roomId: testRoomId });
+        });
+      });
+
+      expect(syncData.role).toBe('VIEWER');
+    } finally {
+      reconnectedSocket.disconnect();
+    }
+  });
+
+  it('13. Duplicate collaboration:join from the same socket does not double presence entries', async () => {
+    const ownerSocket = createSocketClient(ownerCookie);
+    try {
+      const latestPresence = await new Promise<any>((resolve, reject) => {
+        let syncCount = 0;
+        let lastPresence: any = null;
+        ownerSocket.on('connect_error', reject);
+        ownerSocket.on('presence:update', (data) => {
+          lastPresence = data;
+        });
+        ownerSocket.on('collaboration:sync', () => {
+          syncCount += 1;
+          if (syncCount === 1) {
+            ownerSocket.emit('collaboration:join', { roomId: testRoomId });
+          } else {
+            setTimeout(() => resolve(lastPresence), 100);
+          }
+        });
+        ownerSocket.on('connect', () => {
+          ownerSocket.emit('collaboration:join', { roomId: testRoomId });
+        });
+      });
+
+      const ownerEntries = latestPresence.users.filter((u: any) => u.userId === ownerUserId);
+      expect(ownerEntries).toHaveLength(1);
+    } finally {
+      ownerSocket.disconnect();
+    }
   });
 });

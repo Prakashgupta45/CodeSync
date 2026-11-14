@@ -6,6 +6,8 @@ import app from '../app';
 import { prisma } from '@codesync/database';
 import { dockerRunnerService } from '../services/docker-runner.service';
 import { setupCollaborationSockets } from '../socket/collaboration.socket';
+import { collaborationService } from '../services/collaboration.service';
+import { signCandidateInterviewToken } from '../utils/jwt';
 
 describe('Phase 5 — Secure Docker Code Execution & Security Suite', () => {
   const userOwner = {
@@ -126,11 +128,15 @@ describe('Phase 5 — Secure Docker Code Execution & Security Suite', () => {
     await prisma.roomMember.create({
       data: { roomId: testRoomId, userId: viewerUserId, role: 'VIEWER' },
     });
-  });
+  }, 20000);
 
   afterEach(async () => {
-    if (ioServer) ioServer.close();
-    if (httpServer) httpServer.close();
+    collaborationService.clearSessions();
+    if (ioServer) {
+      await new Promise<void>((resolve) => ioServer.close(() => resolve()));
+    } else if (httpServer && httpServer.listening) {
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    }
   });
 
   it('1. Authenticated room OWNER can execute JavaScript code in Docker', async () => {
@@ -215,7 +221,7 @@ describe('Phase 5 — Secure Docker Code Execution & Security Suite', () => {
       .send({ language: 'ruby', code: 'puts "Hello"' });
 
     expect(res.status).toBe(400);
-    expect(res.body.error.message).toContain('javascript');
+    expect(res.body.error.message).toContain('Unsupported language');
   });
 
   it('8. Oversized code payload (>50KB) is rejected (400 BAD REQUEST)', async () => {
@@ -442,4 +448,300 @@ except Exception as e:
         });
     });
   }, 15000);
+
+  it('20. Regression: C++ Two Sum with unordered_map executes without timeout and returns [0, 1]', async () => {
+    const isDockerAvailable = await dockerRunnerService.verifyDockerAvailable();
+    if (!isDockerAvailable) return;
+
+    const cppTwoSumCode = `
+#include <iostream>
+#include <vector>
+#include <unordered_map>
+using namespace std;
+
+class Solution {
+public:
+    vector<int> twoSum(vector<int>& nums, int target) {
+        unordered_map<int, int> seen;
+        for (int i = 0; i < (int)nums.size(); i++) {
+            int complement = target - nums[i];
+            if (seen.find(complement) != seen.end()) {
+                return {seen[complement], i};
+            }
+            seen[nums[i]] = i;
+        }
+        return {};
+    }
+};
+
+int main() {
+    Solution sol;
+    vector<int> nums = {2, 7, 11, 15};
+    int target = 9;
+    vector<int> res = sol.twoSum(nums, target);
+    cout << "[" << res[0] << ", " << res[1] << "]" << endl;
+    return 0;
+}
+`;
+
+    const res = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'cpp', code: cppTwoSumCode });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.timedOut).toBe(false);
+    expect(res.body.data.exitCode).toBe(0);
+    expect(res.body.data.stdout).toBe('[0, 1]');
+    expect(res.body.data.executionTimeMs).toBeLessThan(10000);
+  }, 25000);
+
+  it('21. Regression: C++ Two Sum verifies Test Cases 1, 2, and 3 correctly', async () => {
+    const isDockerAvailable = await dockerRunnerService.verifyDockerAvailable();
+    if (!isDockerAvailable) return;
+
+    const generateCppCode = (nums: number[], target: number) => `
+#include <iostream>
+#include <vector>
+#include <unordered_map>
+using namespace std;
+
+class Solution {
+public:
+    vector<int> twoSum(vector<int>& nums, int target) {
+        unordered_map<int, int> seen;
+        for (int i = 0; i < (int)nums.size(); i++) {
+            int complement = target - nums[i];
+            if (seen.find(complement) != seen.end()) {
+                return {seen[complement], i};
+            }
+            seen[nums[i]] = i;
+        }
+        return {};
+    }
+};
+
+int main() {
+    Solution sol;
+    vector<int> nums = {${nums.join(', ')}};
+    int target = ${target};
+    vector<int> res = sol.twoSum(nums, target);
+    cout << "[" << res[0] << ", " << res[1] << "]" << endl;
+    return 0;
+}
+`;
+
+    // Case 1
+    const res1 = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'cpp', code: generateCppCode([2, 7, 11, 15], 9) });
+    expect(res1.body.data.stdout).toBe('[0, 1]');
+    expect(res1.body.data.exitCode).toBe(0);
+
+    // Case 2
+    const res2 = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'cpp', code: generateCppCode([3, 2, 4], 6) });
+    expect(res2.body.data.stdout).toBe('[1, 2]');
+    expect(res2.body.data.exitCode).toBe(0);
+
+    // Case 3
+    const res3 = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'cpp', code: generateCppCode([3, 3], 6) });
+    expect(res3.body.data.stdout).toBe('[0, 1]');
+    expect(res3.body.data.exitCode).toBe(0);
+  }, 45000);
+
+  it('22. Regression: C++ Two Sum handles large input (10,000 items) with O(n) performance', async () => {
+    const isDockerAvailable = await dockerRunnerService.verifyDockerAvailable();
+    if (!isDockerAvailable) return;
+
+    const largeInputCode = `
+#include <iostream>
+#include <vector>
+#include <unordered_map>
+using namespace std;
+
+class Solution {
+public:
+    vector<int> twoSum(vector<int>& nums, int target) {
+        unordered_map<int, int> seen;
+        for (int i = 0; i < (int)nums.size(); i++) {
+            int complement = target - nums[i];
+            if (seen.find(complement) != seen.end()) {
+                return {seen[complement], i};
+            }
+            seen[nums[i]] = i;
+        }
+        return {};
+    }
+};
+
+int main() {
+    Solution sol;
+    vector<int> nums(10000);
+    for (int i = 0; i < 10000; i++) {
+        nums[i] = i * 2;
+    }
+    int target = nums[9998] + nums[9999];
+    vector<int> res = sol.twoSum(nums, target);
+    cout << "[" << res[0] << ", " << res[1] << "]" << endl;
+    return 0;
+}
+`;
+
+    const res = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'cpp', code: largeInputCode });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.exitCode).toBe(0);
+    expect(res.body.data.stdout).toBe('[9998, 9999]');
+    expect(res.body.data.timedOut).toBe(false);
+  }, 25000);
+
+  it('23. Multi-language: Java execution functions properly in Docker', async () => {
+    const isDockerAvailable = await dockerRunnerService.verifyDockerAvailable();
+    if (!isDockerAvailable) return;
+
+    const javaCode = `
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello Java Docker");
+    }
+}
+`;
+    const res = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'java', code: javaCode });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.exitCode).toBe(0);
+    expect(res.body.data.stdout).toBe('Hello Java Docker');
+  }, 25000);
+
+  it('24. Multi-language: TypeScript execution functions properly in Docker', async () => {
+    const isDockerAvailable = await dockerRunnerService.verifyDockerAvailable();
+    if (!isDockerAvailable) return;
+
+    const tsCode = `
+const greeting: string = "Hello TypeScript Docker";
+console.log(greeting);
+`;
+    const res = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/execute`)
+      .set('Cookie', ownerCookie)
+      .send({ language: 'typescript', code: tsCode });
+
+    expect(res.status).toBe(200);
+    expect(res.body.data.exitCode).toBe(0);
+    expect(res.body.data.stdout).toBe('Hello TypeScript Docker');
+  }, 25000);
+
+  it('25. Interview Assessment: Executes code in virtual interview room with valid signed candidate token', async () => {
+    const isDockerAvailable = await dockerRunnerService.verifyDockerAvailable();
+    if (!isDockerAvailable) return;
+
+    const interviewRoomId = 'room-interview-dmmueag';
+    const candidateToken = signCandidateInterviewToken('cs_inv_test_25', interviewRoomId);
+    const pyCode = 'print("Interview room execution works!")';
+
+    const res = await request(app)
+      .post(`/api/v1/rooms/${interviewRoomId}/execute`)
+      .set('X-Interview-Token', candidateToken)
+      .send({ language: 'python', code: pyCode });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.exitCode).toBe(0);
+    expect(res.body.data.stdout).toBe('Interview room execution works!');
+    expect(res.body.data.roomId).toBe(interviewRoomId);
+  }, 25000);
+
+  it('26. LIS Execution: Executes C++ Longest Increasing Subsequence across all test cases', async () => {
+    const isDockerAvailable = await dockerRunnerService.verifyDockerAvailable();
+    if (!isDockerAvailable) return;
+
+    const interviewRoomId = 'room-interview-dmmueag';
+    const candidateToken = signCandidateInterviewToken('cs_inv_test_26', interviewRoomId);
+
+    const lisCppProgram = `#include <iostream>
+#include <vector>
+#include <algorithm>
+using namespace std;
+
+class Solution {
+public:
+    int longestIncreasingSubsequence(vector<int>& nums) {
+        if (nums.empty()) return 0;
+        vector<int> tails;
+        for (int x : nums) {
+            auto it = lower_bound(tails.begin(), tails.end(), x);
+            if (it == tails.end()) tails.push_back(x);
+            else *it = x;
+        }
+        return tails.size();
+    }
+};
+
+int main() {
+    Solution sol;
+    vector<int> t1 = {10, 9, 2, 5, 3, 7, 101, 18};
+    vector<int> t2 = {0, 1, 0, 3, 2, 3};
+    vector<int> t3 = {7, 7, 7, 7, 7};
+    vector<int> t4 = {1};
+    vector<int> t5 = {};
+
+    cout << sol.longestIncreasingSubsequence(t1) << " ";
+    cout << sol.longestIncreasingSubsequence(t2) << " ";
+    cout << sol.longestIncreasingSubsequence(t3) << " ";
+    cout << sol.longestIncreasingSubsequence(t4) << " ";
+    cout << sol.longestIncreasingSubsequence(t5) << endl;
+    return 0;
+}`;
+
+    const res = await request(app)
+      .post(`/api/v1/rooms/${interviewRoomId}/execute`)
+      .set('X-Interview-Token', candidateToken)
+      .send({ language: 'cpp', code: lisCppProgram });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data.exitCode).toBe(0);
+    expect(res.body.data.stdout.trim()).toBe('4 4 1 1 0');
+  }, 30000);
+
+  it('27. Security: Unauthenticated request to room-interview-* prefix without signed token returns 401', async () => {
+    const res = await request(app)
+      .post('/api/v1/rooms/room-interview-unauth/execute')
+      .send({ language: 'python', code: 'print(1)' });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('28. Security: Forged X-Interview-Token header is rejected with 401', async () => {
+    const res = await request(app)
+      .post('/api/v1/rooms/room-interview-forged/execute')
+      .set('X-Interview-Token', 'cs_inv_forged_raw_string')
+      .send({ language: 'python', code: 'print(1)' });
+
+    expect(res.status).toBe(401);
+  });
+
+  it('29. Security: Signed candidate token bound to another room is rejected with 403 FORBIDDEN', async () => {
+    const wrongRoomToken = signCandidateInterviewToken('cs_inv_wrong', 'room-interview-other');
+    const res = await request(app)
+      .post(`/api/v1/rooms/${testRoomId}/execute`)
+      .set('X-Interview-Token', wrongRoomToken)
+      .send({ language: 'python', code: 'print(1)' });
+
+    expect(res.status).toBe(403);
+  });
 });

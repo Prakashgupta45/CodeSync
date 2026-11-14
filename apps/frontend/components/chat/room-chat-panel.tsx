@@ -194,12 +194,12 @@ export const RoomChatPanel: React.FC<RoomChatPanelProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="card-replit border border-border-subtle bg-[#12141a] flex flex-col w-full min-h-[380px] max-h-[460px] shadow-lg rounded-lg overflow-hidden text-xs font-sans select-none">
+    <div className="flex flex-col w-full h-full min-h-0 bg-[#12141a] border-0 overflow-hidden text-xs font-sans select-none">
       {/* Header Bar */}
       <div className="px-4 py-3 border-b border-border-subtle bg-bg-secondary flex items-center justify-between">
         <div className="flex items-center gap-2 font-mono">
           <MessageSquare className="w-4 h-4 text-replit-orange" />
-          <h2 className="font-bold text-white text-xs uppercase tracking-wider">Room Workspace</h2>
+          <h2 className="font-bold text-text-main text-xs uppercase tracking-wider">Room Collaboration</h2>
         </div>
       </div>
 
@@ -209,8 +209,8 @@ export const RoomChatPanel: React.FC<RoomChatPanelProps> = ({
           onClick={() => setActiveTab('chat')}
           className={`flex-1 py-2.5 px-3 text-center border-b-2 font-medium transition-colors flex items-center justify-center gap-1.5 ${
             activeTab === 'chat'
-              ? 'border-replit-orange text-white bg-bg-secondary/40'
-              : 'border-transparent text-text-muted hover:text-white'
+              ? 'border-replit-orange text-text-main bg-bg-secondary/40 font-semibold'
+              : 'border-transparent text-text-muted hover:text-text-main'
           }`}
         >
           <MessageSquare className="w-3.5 h-3.5" />
@@ -221,8 +221,8 @@ export const RoomChatPanel: React.FC<RoomChatPanelProps> = ({
           onClick={() => setActiveTab('presence')}
           className={`flex-1 py-2.5 px-3 text-center border-b-2 font-medium transition-colors flex items-center justify-center gap-1.5 ${
             activeTab === 'presence'
-              ? 'border-replit-orange text-white bg-bg-secondary/40'
-              : 'border-transparent text-text-muted hover:text-white'
+              ? 'border-replit-orange text-text-main bg-bg-secondary/40 font-semibold'
+              : 'border-transparent text-text-muted hover:text-text-main'
           }`}
         >
           <Users className="w-3.5 h-3.5 text-emerald-400" />
@@ -232,7 +232,7 @@ export const RoomChatPanel: React.FC<RoomChatPanelProps> = ({
 
       {/* Tab Content 1: Chat Stream */}
       {activeTab === 'chat' && (
-        <div className="flex-1 flex flex-col min-h-0 bg-[#0e1117]">
+        <div className="flex-1 flex flex-col min-h-0 bg-bg-main/60">
           {/* Error Alert Banner */}
           {errorMessage && (
             <div className="p-2 bg-red-500/10 border-b border-red-500/20 text-red-400 text-[11px] flex items-center gap-2">
@@ -302,21 +302,42 @@ export const RoomChatPanel: React.FC<RoomChatPanelProps> = ({
           )}
 
           {/* Input Box Bar */}
-          <div className="p-3 border-t border-border-subtle bg-bg-surface flex items-center gap-2">
+          <div className="p-3 border-t border-border-subtle flex items-center gap-2" style={{ background: 'var(--bg-surface, rgba(255,255,255,0.03))' }}>
             <input
               type="text"
               value={inputText}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder="Type a message..."
-              className="flex-1 bg-bg-secondary border border-border-subtle rounded px-3 py-2 text-xs text-white placeholder-text-muted focus:outline-none focus:border-replit-orange font-mono"
+              placeholder="Type a message to room..."
+              style={{
+                flex: 1,
+                background: 'var(--bg-main, #0b0f19)',
+                color: 'var(--text-main, #f8fafc)',
+                border: '1px solid var(--border-subtle, rgba(255, 255, 255, 0.15))',
+                borderRadius: '6px',
+                padding: '8px 12px',
+                fontSize: '12px',
+                outline: 'none',
+              }}
             />
             <button
               onClick={handleSendMessage}
               disabled={!inputText.trim()}
-              className="p-2 rounded bg-replit-orange text-white hover:bg-replit-orange/90 disabled:opacity-40 transition-colors"
+              style={{
+                background: '#ff5c00',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                padding: '8px 12px',
+                cursor: inputText.trim() ? 'pointer' : 'default',
+                opacity: inputText.trim() ? 1 : 0.6,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+              title="Send Message"
             >
-              <Send className="w-3.5 h-3.5" />
+              <Send className="w-4 h-4" color="#ffffff" />
             </button>
           </div>
         </div>
@@ -324,7 +345,7 @@ export const RoomChatPanel: React.FC<RoomChatPanelProps> = ({
 
       {/* Tab Content 2: Presence List */}
       {activeTab === 'presence' && (
-        <div className="flex-1 p-3 bg-[#0e1117] overflow-y-auto space-y-2 font-mono">
+        <div className="flex-1 p-3 bg-bg-main/60 overflow-y-auto space-y-2 font-mono">
           <div className="text-[11px] text-text-muted mb-2 uppercase font-bold tracking-wider">
             Active Members ({presenceUsers.length})
           </div>

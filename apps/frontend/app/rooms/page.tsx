@@ -1,35 +1,98 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '../context/auth-context';
 import { RoomDto } from '@codesync/shared';
+import { AppShell } from '../../components/layout/app-shell';
 import {
-  Code2,
   Plus,
+  GitBranch,
   Search,
-  Filter,
-  LogOut,
-  LayoutDashboard,
-  FolderGit2,
-  Users,
-  ArrowUpRight,
+  LayoutGrid,
+  CodeXml,
+  ArrowRight,
   Loader2,
-  Terminal,
+  MoreVertical,
+  Check,
+  Copy,
+  Trash2,
 } from 'lucide-react';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
 
+function getLanguageColor(lang: string): string {
+  switch (lang.toLowerCase()) {
+    case 'typescript':
+      return 'orange';
+    case 'python':
+      return 'blue';
+    case 'javascript':
+      return 'purple';
+    case 'java':
+      return 'orange';
+    case 'cpp':
+    case 'c++':
+      return 'blue';
+    default:
+      return 'orange';
+  }
+}
+
+function formatRelativeTime(dateString?: string | Date): string {
+  if (!dateString) return 'recently';
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHours = Math.floor(diffMin / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSec < 60) return 'Just now';
+  if (diffMin < 60) return `${diffMin} min ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 export default function RoomsDashboardPage() {
   const router = useRouter();
-  const { user, isLoading: isAuthLoading, logout } = useAuth();
-
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [rooms, setRooms] = useState<RoomDto[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [search, setSearch] = useState<string>('');
   const [languageFilter, setLanguageFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+  // Modals
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [joinModalOpen, setJoinModalOpen] = useState(false);
+
+  // Create room modal state
+  const [newRoomName, setNewRoomName] = useState('');
+  const [newRoomLanguage, setNewRoomLanguage] = useState<'javascript' | 'typescript' | 'python' | 'cpp' | 'java'>('typescript');
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Join room modal state
+  const [joinRoomId, setJoinRoomId] = useState('');
+  const [joinError, setJoinError] = useState<string | null>(null);
+
+  // Check URL params for ?join=1 or ?create=1
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const searchParams = new URLSearchParams(window.location.search);
+      if (searchParams.get('join') === '1') {
+        setJoinModalOpen(true);
+      } else if (searchParams.get('create') === '1') {
+        setCreateModalOpen(true);
+      }
+    }
+  }, []);
 
   const fetchRooms = useCallback(async () => {
     try {
@@ -44,15 +107,14 @@ export default function RoomsDashboardPage() {
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
       });
-
       if (res.ok) {
-        const result = await res.json();
-        if (result.success && Array.isArray(result.data)) {
-          setRooms(result.data);
+        const data = await res.json();
+        if (data.success && Array.isArray(data.data)) {
+          setRooms(data.data);
         }
       }
-    } catch (err) {
-      console.error('Failed to fetch rooms:', err);
+    } catch {
+      // Graceful error handling
     } finally {
       setIsLoading(false);
     }
@@ -60,241 +122,382 @@ export default function RoomsDashboardPage() {
 
   useEffect(() => {
     if (!isAuthLoading && !user) {
-      router.push('/login');
+      router.push('/sign-in');
     } else if (user) {
       fetchRooms();
     }
   }, [user, isAuthLoading, router, fetchRooms]);
 
-  if (isAuthLoading || !user) {
-    return (
-      <div className="min-h-screen bg-bg-main flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3 text-replit-orange">
-          <Loader2 className="w-8 h-8 animate-spin" />
-          <p className="text-xs font-mono text-text-muted">Loading Coding Rooms Workspace...</p>
-        </div>
-      </div>
-    );
-  }
-
-  const handleLogout = async () => {
-    await logout();
-    router.push('/login');
+  const handleCreateRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newRoomName.trim()) {
+      setCreateError('Please enter a room name');
+      return;
+    }
+    setIsCreating(true);
+    setCreateError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/rooms`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name: newRoomName.trim(), language: newRoomLanguage }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error?.message || 'Failed to create room');
+      }
+      setCreateModalOpen(false);
+      setNewRoomName('');
+      fetchRooms();
+      router.push(`/rooms/${data.data.id}`);
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create room');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
+  const handleJoinRoom = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!joinRoomId.trim()) {
+      setJoinError('Please enter a valid room ID');
+      return;
+    }
+    setJoinModalOpen(false);
+    router.push(`/rooms/${joinRoomId.trim()}`);
+  };
+
+  const filteredRooms = useMemo(() => {
+    return rooms.filter((room) => {
+      const matchesSearch =
+        !search.trim() ||
+        room.name.toLowerCase().includes(search.toLowerCase()) ||
+        room.id.toLowerCase().includes(search.toLowerCase());
+      const matchesLang =
+        languageFilter === 'all' ||
+        room.language.toLowerCase() === languageFilter.toLowerCase();
+      const matchesStatus =
+        statusFilter === 'all' ||
+        (statusFilter === 'active' && (room.status || 'ACTIVE').toUpperCase() === 'ACTIVE') ||
+        (statusFilter === 'completed' && (room.status || '').toUpperCase() !== 'ACTIVE');
+      return matchesSearch && matchesLang && matchesStatus;
+    });
+  }, [rooms, search, languageFilter, statusFilter]);
+
   return (
-    <div className="min-h-screen bg-bg-main text-text-main flex flex-col">
-      {/* Top Header Navigation */}
-      <header className="border-b border-border-subtle bg-bg-surface sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <Link href="/dashboard" className="flex items-center gap-2">
-              <div className="p-1.5 rounded bg-replit-orange/10 border border-replit-orange/30 text-replit-orange">
-                <Code2 className="w-5 h-5" />
-              </div>
-              <span className="text-base font-bold text-white tracking-tight">
-                CodeSync <span className="text-replit-orange font-mono">AI</span>
-              </span>
-            </Link>
-
-            <nav className="flex items-center gap-1">
-              <Link
-                href="/dashboard"
-                className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium text-text-muted hover:text-white transition-colors"
-              >
-                <LayoutDashboard className="w-3.5 h-3.5" />
-                Dashboard
-              </Link>
-              <Link
-                href="/rooms"
-                className="flex items-center gap-2 px-3 py-1.5 rounded text-xs font-medium bg-bg-secondary text-white border border-border-subtle"
-              >
-                <FolderGit2 className="w-3.5 h-3.5" />
-                My Rooms
-              </Link>
-            </nav>
+    <AppShell title="My rooms" subtitle="All your collaborative coding workspaces" onRoomCreated={fetchRooms}>
+      <main className="dashboard-content">
+        {/* Page Heading */}
+        <div className="page-heading">
+          <div>
+            <div className="kicker">WORKSPACES</div>
+            <h1>My coding rooms</h1>
+            <p>Pick up where you left off or start something new.</p>
           </div>
-
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-2.5 py-1 rounded bg-bg-secondary border border-border-subtle text-xs font-mono">
-              <div className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span className="text-text-main font-medium">{user.name}</span>
-            </div>
-
+          <div className="welcome-actions">
             <button
-              onClick={handleLogout}
-              className="btn-replit-secondary text-xs px-3 py-1 text-red-400 hover:text-red-300 border-red-500/20"
+              className="app-button"
+              onClick={() => {
+                setCreateError(null);
+                setCreateModalOpen(true);
+              }}
             >
-              <LogOut className="w-3.5 h-3.5" />
-              Logout
+              <Plus className="lucide" size={16} />
+              Create room
+            </button>
+            <button
+              className="app-button secondary"
+              onClick={() => {
+                setJoinError(null);
+                setJoinModalOpen(true);
+              }}
+            >
+              <GitBranch className="lucide" size={16} />
+              Join room
             </button>
           </div>
         </div>
-      </header>
 
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 py-8 flex-1 w-full space-y-6">
-        {/* Header Title & Create Button */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-border-subtle">
-          <div>
-            <h1 className="text-2xl font-bold text-white tracking-tight">My Coding Rooms</h1>
-            <p className="text-xs text-text-muted mt-1">
-              Manage your real-time collaborative coding environments
-            </p>
-          </div>
-
-          <Link href="/rooms/create" className="btn-replit-primary text-xs shrink-0">
-            <Plus className="w-4 h-4" />
-            Create Room
-          </Link>
-        </div>
-
-        {/* Unified Filter Toolbar */}
-        <div className="card-replit p-3.5 flex flex-col md:flex-row items-center gap-3 shadow-md">
-          {/* Search Input */}
-          <div className="relative flex-1 w-full flex items-center group">
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#62687a] group-hover:text-[#9da2b0] group-focus-within:text-replit-orange transition-colors duration-150 z-10"
-            />
+        {/* Toolbar Row */}
+        <div className="toolbar-row">
+          <label className="search-box room-search">
+            <Search className="lucide" size={16} />
             <input
-              type="text"
-              aria-label="Search rooms by name"
+              placeholder="Search rooms..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search rooms by name..."
-              style={{ paddingLeft: '2.5rem' }}
-              className="w-full h-10 py-2 pr-3.5 text-xs text-text-main font-sans rounded-md bg-[#16181d] hover:bg-[#1a1d24] border border-border-subtle hover:border-[#404656] focus:border-replit-orange focus:bg-[#1c1e26] focus:outline-none focus:ring-2 focus:ring-replit-orange/20 transition-all duration-150 placeholder:text-[#62687a]"
             />
-          </div>
+          </label>
 
-          {/* Filter Controls Group */}
-          <div className="flex items-center gap-2.5 w-full md:w-auto flex-wrap sm:flex-nowrap">
-            <div className="flex items-center gap-1.5 text-xs text-[#9da2b0] font-mono shrink-0 select-none">
-              <Filter className="w-3.5 h-3.5 text-[#62687a]" />
-              <span>Filter:</span>
-            </div>
+          <select
+            value={languageFilter}
+            onChange={(e) => setLanguageFilter(e.target.value)}
+          >
+            <option value="all">All languages</option>
+            <option value="typescript">TypeScript</option>
+            <option value="javascript">JavaScript</option>
+            <option value="python">Python</option>
+            <option value="java">Java</option>
+            <option value="cpp">C++</option>
+          </select>
 
-            {/* Language Select */}
-            <select
-              aria-label="Filter by language"
-              value={languageFilter}
-              onChange={(e) => setLanguageFilter(e.target.value)}
-              className="select-replit h-10 w-full sm:w-auto"
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="completed">Completed</option>
+          </select>
+
+          <div className="view-toggle">
+            <button
+              type="button"
+              className={viewMode === 'grid' ? 'active' : ''}
+              onClick={() => setViewMode('grid')}
+              aria-label="Grid view"
             >
-              <option value="all">All Languages</option>
-              <option value="python">Python</option>
-              <option value="javascript">JavaScript</option>
-              <option value="typescript">TypeScript</option>
-              <option value="cpp">C++</option>
-              <option value="java">Java</option>
-            </select>
-
-            {/* Status Select */}
-            <select
-              aria-label="Filter by status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="select-replit h-10 w-full sm:w-auto"
+              <LayoutGrid className="lucide" size={16} />
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'list' ? 'active' : ''}
+              onClick={() => setViewMode('list')}
+              aria-label="List view"
             >
-              <option value="all">All Status</option>
-              <option value="ACTIVE">Active</option>
-              <option value="CLOSED">Closed</option>
-            </select>
+              <CodeXml className="lucide" size={16} />
+            </button>
           </div>
         </div>
 
-        {/* Rooms Table */}
-        <div className="card-replit overflow-hidden">
-          {isLoading ? (
-            <div className="py-12 text-center text-text-muted flex flex-col items-center gap-3">
-              <Loader2 className="w-6 h-6 animate-spin text-replit-orange" />
-              <span className="text-xs font-mono">Fetching rooms...</span>
+        {/* Room List or Grid */}
+        {isLoading ? (
+          <div style={{ padding: '60px 0', textAlign: 'center', color: 'var(--text-muted, #94a3b8)' }}>
+            <Loader2 className="lucide animate-spin" size={28} style={{ margin: '0 auto 12px' }} />
+            <p>Loading your rooms...</p>
+          </div>
+        ) : filteredRooms.length === 0 ? (
+          <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+            <p style={{ fontSize: '15px', color: 'var(--text-muted, #94a3b8)', marginBottom: '16px' }}>
+              {search || languageFilter !== 'all' || statusFilter !== 'all'
+                ? 'No rooms matched your filters.'
+                : 'You have no coding rooms yet.'}
+            </p>
+            <button
+              className="app-button"
+              onClick={() => setCreateModalOpen(true)}
+            >
+              <Plus className="lucide" size={16} /> Create Room
+            </button>
+          </div>
+        ) : viewMode === 'grid' ? (
+          <div className="room-cards">
+            {filteredRooms.map((room) => {
+              const color = getLanguageColor(room.language);
+              const isRoomActive = (room.status || 'ACTIVE').toUpperCase() === 'ACTIVE';
+              return (
+                <Link
+                  key={room.id}
+                  className="room-card"
+                  href={`/rooms/${room.id}`}
+                >
+                  <div className="room-card-top">
+                    <span className={`room-dot ${color}`} />
+                    <span className="status">
+                      <i />
+                      {isRoomActive ? 'Active' : 'Completed'}
+                    </span>
+                    <MoreVertical className="lucide" size={16} style={{ color: 'var(--text-muted, #94a3b8)' }} />
+                  </div>
+                  <h3>{room.name}</h3>
+                  <p>{room.id}</p>
+                  <div className="room-card-meta">
+                    <span className="language-tag">{room.language}</span>
+                    <span>{formatRelativeTime(room.updatedAt)}</span>
+                  </div>
+                  <div className="room-card-footer">
+                    <span className="member-stack">
+                      <i className="avatar purple">
+                        {(user?.name || 'DEV').slice(0, 2).toUpperCase()}
+                      </i>
+                      {room.memberCount && room.memberCount > 1 ? (
+                        <b>+{room.memberCount - 1}</b>
+                      ) : null}
+                    </span>
+                    <span className="open-room">
+                      Open room <ArrowRight className="lucide" size={14} />
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="panel rooms-panel" style={{ marginTop: '16px' }}>
+            <div className="room-table">
+              <div className="table-head">
+                <span>ROOM</span>
+                <span>LANGUAGE</span>
+                <span>MEMBERS</span>
+                <span>STATUS</span>
+                <span>LAST ACTIVITY</span>
+                <span></span>
+              </div>
+              {filteredRooms.map((room) => {
+                const color = getLanguageColor(room.language);
+                const isRoomActive = (room.status || 'ACTIVE').toUpperCase() === 'ACTIVE';
+                return (
+                  <Link
+                    key={room.id}
+                    className="table-row"
+                    href={`/rooms/${room.id}`}
+                  >
+                    <div>
+                      <span className={`room-dot ${color}`} />
+                      <strong>{room.name}</strong>
+                      <small>{room.id.slice(0, 14)}...</small>
+                    </div>
+                    <span className="language-tag">{room.language}</span>
+                    <span className="member-stack">
+                      <i className="avatar purple">
+                        {(user?.name || 'DEV').slice(0, 2).toUpperCase()}
+                      </i>
+                      {room.memberCount && room.memberCount > 1 ? (
+                        <b>+{room.memberCount - 1}</b>
+                      ) : null}
+                    </span>
+                    <span className={`status ${isRoomActive ? 'active' : 'completed'}`}>
+                      <i />
+                      {isRoomActive ? 'Active' : 'Completed'}
+                    </span>
+                    <span className="muted">{formatRelativeTime(room.updatedAt)}</span>
+                    <ArrowRight className="lucide" size={16} />
+                  </Link>
+                );
+              })}
             </div>
-          ) : rooms.length === 0 ? (
-            <div className="py-16 text-center text-text-muted flex flex-col items-center gap-3">
-              <Terminal className="w-8 h-8 text-border-subtle" />
-              <p className="text-sm font-medium text-white">No coding rooms found</p>
-              <p className="text-xs max-w-sm">
-                Create a new room or join an existing room invitation link to get started.
-              </p>
-              <Link href="/rooms/create" className="btn-replit-primary text-xs mt-2">
-                <Plus className="w-4 h-4" />
-                Create First Room
-              </Link>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-border-subtle bg-bg-secondary/40 text-[11px] font-mono text-text-muted uppercase tracking-wider">
-                    <th className="px-5 py-3 font-medium">Room Name</th>
-                    <th className="px-5 py-3 font-medium">Room ID</th>
-                    <th className="px-5 py-3 font-medium">Language</th>
-                    <th className="px-5 py-3 font-medium">Role</th>
-                    <th className="px-5 py-3 font-medium">Status</th>
-                    <th className="px-5 py-3 font-medium">Members</th>
-                    <th className="px-5 py-3 font-medium text-right">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border-subtle text-xs">
-                  {rooms.map((room) => (
-                    <tr key={room.id} className="hover:bg-bg-secondary/50 transition-colors">
-                      <td className="px-5 py-3.5 font-medium text-white flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-replit-orange" />
-                        {room.name}
-                      </td>
-                      <td className="px-5 py-3.5 font-mono text-text-muted text-[11px]">
-                        {room.id}
-                      </td>
-                      <td className="px-5 py-3.5 font-mono">
-                        <span className="px-2 py-0.5 rounded bg-bg-secondary border border-border-subtle text-text-muted">
-                          {room.language}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5 font-mono">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[11px] font-semibold ${
-                            room.role === 'OWNER'
-                              ? 'bg-replit-orange/20 text-replit-orange border border-replit-orange/30'
-                              : 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                          }`}
-                        >
-                          {room.role || 'MEMBER'}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5 font-mono">
-                        <span
-                          className={
-                            room.status === 'ACTIVE' ? 'text-emerald-400' : 'text-gray-500'
-                          }
-                        >
-                          {room.status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-3.5 font-mono text-text-muted">
-                        <div className="flex items-center gap-1">
-                          <Users className="w-3.5 h-3.5" />
-                          <span>{room.memberCount || 1}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-3.5 text-right">
-                        <Link
-                          href={`/room/${room.id}`}
-                          className="inline-flex items-center gap-1 text-replit-orange hover:underline font-mono text-[11px] font-semibold"
-                        >
-                          Open Room
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+          </div>
+        )}
       </main>
-    </div>
+
+      {/* Create Room Modal */}
+      {createModalOpen && (
+        <div className="modal-backdrop" onClick={() => setCreateModalOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Create Coding Room</h3>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setCreateModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleCreateRoom}>
+              {createError && (
+                <div className="modal-error">
+                  <span>{createError}</span>
+                </div>
+              )}
+              <label className="modal-label">
+                Room Name
+                <input
+                  type="text"
+                  placeholder="e.g. System Design Mock Interview"
+                  value={newRoomName}
+                  onChange={(e) => setNewRoomName(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </label>
+
+              <label className="modal-label">
+                Programming Language
+                <select
+                  value={newRoomLanguage}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>) =>
+                    setNewRoomLanguage(e.target.value as typeof newRoomLanguage)
+                  }
+                >
+                  <option value="typescript">TypeScript</option>
+                  <option value="javascript">JavaScript (Node.js)</option>
+                  <option value="python">Python 3.11</option>
+                  <option value="java">Java 21</option>
+                  <option value="cpp">C++ 20</option>
+                </select>
+              </label>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="app-button secondary"
+                  onClick={() => setCreateModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="app-button"
+                  disabled={isCreating}
+                >
+                  {isCreating ? 'Creating...' : 'Create Room'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Join Room Modal */}
+      {joinModalOpen && (
+        <div className="modal-backdrop" onClick={() => setJoinModalOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Join Existing Room</h3>
+              <button
+                type="button"
+                className="modal-close"
+                onClick={() => setJoinModalOpen(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <form onSubmit={handleJoinRoom}>
+              {joinError && (
+                <div className="modal-error">
+                  <span>{joinError}</span>
+                </div>
+              )}
+              <label className="modal-label">
+                Room ID or Invite Code
+                <input
+                  type="text"
+                  placeholder="Paste room UUID or code here"
+                  value={joinRoomId}
+                  onChange={(e) => setJoinRoomId(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </label>
+
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="app-button secondary"
+                  onClick={() => setJoinModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="app-button">
+                  Join Room
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </AppShell>
   );
 }

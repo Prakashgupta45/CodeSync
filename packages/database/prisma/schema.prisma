@@ -23,22 +23,50 @@ enum RoomMemberRole {
   VIEWER
 }
 
+enum InterviewStatus {
+  DRAFT
+  READY
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum InterviewActionType {
+  START_INTERVIEW
+  ASK_APPROACH
+  ANALYZE_CODE
+  ASK_COMPLEXITY
+  DEBUG_ERROR
+  FOLLOW_UP
+  EVALUATE
+  FINAL_REPORT
+}
+
+enum SenderType {
+  AI_INTERVIEWER
+  CANDIDATE
+  SYSTEM
+}
+
 model User {
   id            String         @id @default(uuid())
   email         String         @unique
   passwordHash  String
   name          String
   role          Role           @default(USER)
+  status        String         @default("ACTIVE")
   avatarUrl     String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
-  sessions         Session[]
-  refreshTokens    RefreshToken[]
-  ownedRooms       Room[]         @relation("OwnedRooms")
-  roomMemberships  RoomMember[]   @relation("RoomMemberships")
-  chatMessages     ChatMessage[]
-  aiMessages       AiMessage[]
+  sessions            Session[]
+  refreshTokens       RefreshToken[]
+  ownedRooms          Room[]         @relation("OwnedRooms")
+  roomMemberships     RoomMember[]   @relation("RoomMemberships")
+  chatMessages        ChatMessage[]
+  aiMessages          AiMessage[]
+  ownedInterviews     Interview[]    @relation("OwnedInterviews")
+  candidateInterviews Interview[]    @relation("CandidateInterviews")
 
   @@map("users")
 }
@@ -85,6 +113,7 @@ model Room {
   document     RoomDocument?
   chatMessages ChatMessage[]
   aiMessages   AiMessage[]
+  interviews   Interview[]
 
   @@index([ownerId])
   @@index([status])
@@ -145,4 +174,122 @@ model AiMessage {
 
   @@index([roomId, createdAt])
   @@map("ai_messages")
+}
+
+model Problem {
+  id            String   @id @default(uuid())
+  title         String
+  description   String
+  difficulty    String   @default("MEDIUM")
+  constraints   String
+  examples      String
+  expectedInput String?
+  expectedOutput String?
+  starterCode   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  interviews Interview[]
+
+  @@map("problems")
+}
+
+model Interview {
+  id           String          @id @default(uuid())
+  roomId       String
+  room         Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  ownerId      String
+  owner        User            @relation("OwnedInterviews", fields: [ownerId], references: [id], onDelete: Cascade)
+  candidateId  String?
+  candidate    User?           @relation("CandidateInterviews", fields: [candidateId], references: [id], onDelete: SetNull)
+  problemId    String?
+  problem      Problem?        @relation(fields: [problemId], references: [id], onDelete: SetNull)
+  title        String
+  candidateName String?
+  candidateEmail String?
+  jobRole      String?         @default("SDE")
+  status       InterviewStatus @default(DRAFT)
+  language     String          @default("javascript")
+  duration     Int             @default(45)
+  instructions String?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  isDeleted    Boolean         @default(false)
+  deletedAt    DateTime?
+  deletedBy    String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  messages InterviewMessage[]
+  events   InterviewEvent[]
+  report   InterviewReport?
+
+  @@index([roomId])
+  @@index([ownerId])
+  @@index([candidateId])
+  @@index([status])
+  @@map("interviews")
+}
+
+model InterviewMessage {
+  id          String              @id @default(uuid())
+  interviewId String
+  interview   Interview           @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  senderType  SenderType
+  senderId    String?
+  content     String
+  action      InterviewActionType?
+  createdAt   DateTime            @default(now())
+
+  @@index([interviewId, createdAt])
+  @@map("interview_messages")
+}
+
+model InterviewEvent {
+  id          String    @id @default(uuid())
+  interviewId String
+  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  eventType   String
+  payload     String?
+  createdAt   DateTime  @default(now())
+
+  @@index([interviewId, createdAt])
+  @@map("interview_events")
+}
+
+model InterviewReport {
+  id                  String    @id @default(uuid())
+  interviewId         String    @unique
+  interview           Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  overallScore        Int
+  problemSolvingScore Int
+  algorithmScore      Int
+  codeQualityScore    Int
+  debuggingScore      Int
+  complexityScore     Int
+  communicationScore  Int
+  strengths           String
+  weaknesses          String
+  improvements        String
+  importantEvents     String
+  assessment          String
+  recommendedNextSteps String
+  createdAt           DateTime  @default(now())
+
+  @@map("interview_reports")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  action     String
+  actorId    String
+  actorEmail String
+  targetType String
+  targetId   String
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
 }

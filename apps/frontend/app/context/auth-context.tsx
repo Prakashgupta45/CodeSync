@@ -21,7 +21,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Fetch current authenticated user via HTTP-only cookie
-  const fetchCurrentUser = useCallback(async (): Promise<boolean> => {
+  const fetchCurrentUser = useCallback(async (): Promise<{ authenticated: boolean; canRefresh: boolean }> => {
     try {
       const res = await fetch(`${API_BASE_URL}/auth/me`, {
         method: 'GET',
@@ -33,14 +33,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const result = await res.json();
         if (result.success && result.data?.user) {
           setUser(result.data.user);
-          return true;
+          return { authenticated: true, canRefresh: false };
         }
       }
+
+      // Check if server indicated a refresh token cookie exists to avoid blind 401 refresh calls
+      const errorJson = await res.json().catch(() => null);
+      const canRefresh = Boolean(errorJson?.error?.details?.canRefresh);
+
       setUser(null);
-      return false;
+      return { authenticated: false, canRefresh };
     } catch (err) {
       setUser(null);
-      return false;
+      return { authenticated: false, canRefresh: false };
     }
   }, []);
 
@@ -72,9 +77,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let isMounted = true;
 
     const initAuth = async () => {
-      const isSuccess = await fetchCurrentUser();
-      if (!isSuccess) {
-        // Try refreshing if access token expired
+      const status = await fetchCurrentUser();
+      if (!status.authenticated && status.canRefresh) {
+        // Only try refreshing if the server verified a refresh token cookie exists
         await refreshSession();
       }
       if (isMounted) {

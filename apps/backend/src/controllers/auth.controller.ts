@@ -17,7 +17,6 @@ export class AuthController {
         message: 'User registered successfully',
         data: {
           user: result.user,
-          accessToken: result.accessToken,
         },
       };
 
@@ -38,7 +37,6 @@ export class AuthController {
         message: 'Logged in successfully',
         data: {
           user: result.user,
-          accessToken: result.accessToken,
         },
       };
 
@@ -76,7 +74,6 @@ export class AuthController {
         message: 'Tokens refreshed successfully',
         data: {
           user: result.user,
-          accessToken: result.accessToken,
         },
       };
 
