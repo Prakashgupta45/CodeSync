@@ -1,7 +1,26 @@
 import { NextResponse } from 'next/server';
 import { aiPortalInterviewSchema } from '@codesync/shared';
-import { readInterviewsStore } from '@/lib/interview-store';
 import { getBackendApiBaseUrl, signCandidateInterviewToken } from '@/lib/server-auth';
+
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ token: string }> }
+) {
+  try {
+    const { token } = await params;
+    const backendRes = await fetch(`${getBackendApiBaseUrl()}/api/v1/interviews/token/${token}/ai`, {
+      cache: 'no-store',
+    });
+    const data = await backendRes.json().catch(() => ({
+      success: false,
+      error: { message: 'Failed to retrieve AI conversation history' },
+    }));
+    return NextResponse.json(data, { status: backendRes.status });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'AI history proxy failed';
+    return NextResponse.json({ success: false, error: { message } }, { status: 500 });
+  }
+}
 
 export async function POST(
   req: Request,
@@ -9,8 +28,24 @@ export async function POST(
 ) {
   try {
     const { token } = await params;
-    const list = readInterviewsStore();
-    const interview = list.find((i) => i.token === token);
+    const interviewRes = await fetch(`${getBackendApiBaseUrl()}/api/v1/interviews/token/${token}`);
+
+    if (interviewRes.status === 410) {
+      return NextResponse.json(
+        { success: false, error: { message: 'Interview session has been cancelled' } },
+        { status: 410 }
+      );
+    }
+
+    if (!interviewRes.ok) {
+      return NextResponse.json(
+        { success: false, error: { message: 'Interview session not found' } },
+        { status: 404 }
+      );
+    }
+
+    const payload = await interviewRes.json();
+    const interview = payload?.data;
 
     if (!interview) {
       return NextResponse.json(
@@ -45,17 +80,12 @@ export async function POST(
       );
     }
 
-    const targetRoomId =
-      interview.roomId || `room-interview-${interview.token.replace('cs_inv_', '')}`;
-    const signedCandidateJwt = signCandidateInterviewToken(interview.token, targetRoomId);
-
     const backendRes = await fetch(
-      `${getBackendApiBaseUrl()}/api/v1/rooms/${targetRoomId}/ai/prompt`,
+      `${getBackendApiBaseUrl()}/api/v1/interviews/token/${token}/ai`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Interview-Token': signedCandidateJwt,
         },
         body: JSON.stringify(parsed.data),
       }

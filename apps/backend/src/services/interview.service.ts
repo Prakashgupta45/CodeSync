@@ -27,10 +27,65 @@ const SEED_PROBLEMS = [
       'function twoSum(nums, target) {\n  // Write your O(N) hash map or two-pointer solution here\n  return [];\n}',
   },
   {
+    title: 'Reverse Linked List',
+    difficulty: 'MEDIUM',
+    description:
+      'Given the `head` of a singly linked list, reverse the list, and return the reversed list head.',
+    constraints: 'The number of nodes in the list is in the range [0, 5000].\n-5000 <= Node.val <= 5000',
+    examples: JSON.stringify([
+      { input: 'head = [1,2,3,4,5]', output: '[5,4,3,2,1]' },
+      { input: 'head = [1,2]', output: '[2,1]' },
+      { input: 'head = []', output: '[]' },
+    ]),
+    starterCode:
+      'function reverseList(head) {\n  // Write your iterative or recursive list reversal here\n  return head;\n}',
+  },
+  {
+    title: 'Valid Parentheses',
+    difficulty: 'EASY',
+    description:
+      "Given a string `s` containing just the characters '(', ')', '{', '}', '[' and ']', determine if the input string is valid.\n\nAn input string is valid if open brackets are closed by the same type of brackets and in the correct order.",
+    constraints: '1 <= s.length <= 10^4\ns consists of parentheses only "()[]{}"',
+    examples: JSON.stringify([
+      { input: 's = "()"', output: 'true' },
+      { input: 's = "()[]{}"', output: 'true' },
+      { input: 's = "(]"', output: 'false' },
+    ]),
+    starterCode:
+      'function isValid(s) {\n  // Write your stack-based solution here\n  return false;\n}',
+  },
+  {
+    title: 'Longest Substring Without Repeating Characters',
+    difficulty: 'MEDIUM',
+    description:
+      'Given a string `s`, find the length of the longest substring without repeating characters.',
+    constraints: '0 <= s.length <= 5 * 10^4\ns consists of English letters, digits, symbols and spaces.',
+    examples: JSON.stringify([
+      { input: 's = "abcabcbb"', output: '3', explanation: 'The answer is "abc", with length 3.' },
+      { input: 's = "bbbbb"', output: '1', explanation: 'The answer is "b", with length 1.' },
+      { input: 's = "pwwkew"', output: '3', explanation: 'The answer is "wke", with length 3.' },
+    ]),
+    starterCode:
+      'function lengthOfLongestSubstring(s) {\n  // Write your sliding window solution here\n  return 0;\n}',
+  },
+  {
+    title: 'LRU Cache',
+    difficulty: 'HARD',
+    description:
+      'Design a data structure that follows the constraints of a Least Recently Used (LRU) cache.\n\nImplement the LRUCache class with get(key) and put(key, value) in O(1) average time complexity.',
+    constraints: '1 <= capacity <= 3000\n0 <= key <= 10^4\n0 <= value <= 10^5\nAt most 2 * 10^5 calls will be made to get and put.',
+    examples: JSON.stringify([
+      { input: 'capacity = 2, put(1,1), put(2,2), get(1)', output: '1' },
+      { input: 'put(3,3), get(2)', output: '-1' },
+    ]),
+    starterCode:
+      'class LRUCache {\n  constructor(capacity) {\n    this.capacity = capacity;\n    this.cache = new Map();\n  }\n  get(key) {\n    if (!this.cache.has(key)) return -1;\n    const val = this.cache.get(key);\n    this.cache.delete(key);\n    this.cache.set(key, val);\n    return val;\n  }\n  put(key, value) {\n    if (this.cache.has(key)) {\n      this.cache.delete(key);\n    } else if (this.cache.size >= this.capacity) {\n      const oldest = this.cache.keys().next().value;\n      this.cache.delete(oldest);\n    }\n    this.cache.set(key, value);\n  }\n}',
+  },
+  {
     title: 'Valid Anagram',
     difficulty: 'EASY',
     description:
-      'Given two strings `s` and `t`, return `true` if `t` is an anagram of `s`, and `false` otherwise. An Anagram is a word or phrase formed by rearranging the letters of a different word or phrase, typically using all the original letters exactly once.',
+      'Given two strings `s` and `t`, return `true` if `t` is an anagram of `s`, and `false` otherwise.',
     constraints: '1 <= s.length, t.length <= 5 * 10^4',
     examples: JSON.stringify([
       { input: 's = "anagram", t = "nagaram"', output: 'true' },
@@ -38,18 +93,6 @@ const SEED_PROBLEMS = [
     ]),
     starterCode:
       'function isAnagram(s, t) {\n  // Write your solution here\n  return false;\n}',
-  },
-  {
-    title: 'Reverse Linked List',
-    difficulty: 'MEDIUM',
-    description:
-      'Given the `head` of a singly linked list, reverse the list, and return the reversed list head.',
-    constraints: 'The number of nodes in the list is in the range [0, 5000].',
-    examples: JSON.stringify([
-      { input: 'head = [1,2,3,4,5]', output: '[5,4,3,2,1]' },
-    ]),
-    starterCode:
-      'function reverseList(head) {\n  // Write your iterative or recursive list reversal here\n  return head;\n}',
   },
 ];
 
@@ -59,13 +102,13 @@ export class InterviewService {
    */
   public async ensureSeedProblems(): Promise<ProblemDto[]> {
     const existing = await prisma.problem.findMany();
-    if (existing.length === 0) {
-      for (const p of SEED_PROBLEMS) {
+    for (const p of SEED_PROBLEMS) {
+      const found = existing.find((ep) => ep.title.toLowerCase() === p.title.toLowerCase());
+      if (!found) {
         await prisma.problem.create({ data: p });
       }
-      return (await prisma.problem.findMany()).map(this.mapProblemToDto);
     }
-    return existing.map(this.mapProblemToDto);
+    return (await prisma.problem.findMany()).map(this.mapProblemToDto);
   }
 
   /**
@@ -112,6 +155,17 @@ export class InterviewService {
     const participantMember = room.members.find((m) => m.role === 'PARTICIPANT') || member;
 
     let targetProblemId = problemId;
+    if (problemId) {
+      let existingProb = await prisma.problem.findUnique({ where: { id: problemId } }).catch(() => null);
+      if (!existingProb) {
+        existingProb = await prisma.problem.findFirst({
+          where: { title: { equals: problemId.trim(), mode: 'insensitive' } },
+        });
+      }
+      if (existingProb) {
+        targetProblemId = existingProb.id;
+      }
+    }
     if (!targetProblemId) {
       const problems = await this.ensureSeedProblems();
       targetProblemId = problems[0]?.id;
@@ -167,6 +221,7 @@ export class InterviewService {
         room: { include: { members: true } },
         problem: true,
         candidate: { select: { id: true, name: true } },
+        events: true,
       },
     });
 
@@ -193,13 +248,32 @@ export class InterviewService {
       },
     });
 
+    const metadataEvent = interview.events?.find((e: any) => e.eventType === 'PORTAL_METADATA');
+    let metadataProblemTitle = '';
+    let metadataProblemDesc = '';
+    let metadataStarterCode = '';
+    if (metadataEvent?.payload) {
+      try {
+        const meta = JSON.parse(metadataEvent.payload);
+        if (meta.problems && meta.problems.length > 0) {
+          metadataProblemTitle = meta.problems[0].title;
+          metadataProblemDesc = meta.problems[0].description;
+          metadataStarterCode = meta.problems[0].starterTemplates?.[interview.language] || meta.problems[0].starterCode || '';
+        }
+      } catch (_) {}
+    }
+
+    const problemTitle = interview.problem?.title || metadataProblemTitle || interview.title;
+    const problemDesc = interview.problem?.description || metadataProblemDesc || 'Explain your high-level approach.';
+    const starterCode = interview.problem?.starterCode || metadataStarterCode || '';
+
     // Generate initial AI Interviewer Greeting / Question
     const aiResponse = await interviewAiService.generateInterviewerResponse(
       'START_INTERVIEW',
-      interview.problem?.title || interview.title,
-      interview.problem?.description || 'Explain your high-level approach.',
+      problemTitle,
+      problemDesc,
       'Starting interview session',
-      interview.problem?.starterCode || '',
+      starterCode,
       interview.language
     );
 
@@ -248,6 +322,7 @@ export class InterviewService {
       include: {
         room: { include: { members: true, document: true } },
         problem: true,
+        events: true,
       },
     });
 
@@ -280,13 +355,30 @@ export class InterviewService {
       },
     });
 
-    const activeCode = codeContext || interview.room.document?.content || interview.problem?.starterCode || '';
+    const metadataEvent = interview.events?.find((e: any) => e.eventType === 'PORTAL_METADATA');
+    let metadataProblemTitle = '';
+    let metadataProblemDesc = '';
+    let metadataStarterCode = '';
+    if (metadataEvent?.payload) {
+      try {
+        const meta = JSON.parse(metadataEvent.payload);
+        if (meta.problems && meta.problems.length > 0) {
+          metadataProblemTitle = meta.problems[0].title;
+          metadataProblemDesc = meta.problems[0].description;
+          metadataStarterCode = meta.problems[0].starterTemplates?.[interview.language] || meta.problems[0].starterCode || '';
+        }
+      } catch (_) {}
+    }
+
+    const problemTitle = interview.problem?.title || metadataProblemTitle || interview.title;
+    const problemDesc = interview.problem?.description || metadataProblemDesc || '';
+    const activeCode = codeContext || interview.room.document?.content || interview.problem?.starterCode || metadataStarterCode || '';
 
     // 2. Generate AI Interviewer Follow-up Question
     const aiResponse = await interviewAiService.generateInterviewerResponse(
       action,
-      interview.problem?.title || interview.title,
-      interview.problem?.description || '',
+      problemTitle,
+      problemDesc,
       content,
       activeCode,
       interview.language,
@@ -776,12 +868,62 @@ export class InterviewService {
       },
     });
 
-    // 2. Identify or seed default problem if available
+    // 2. Identify, seed, or link selected problem
     let problemId: string | undefined = undefined;
-    if (data.problems && data.problems.length > 0 && data.problems[0].id) {
-      const existingProb = await prisma.problem.findUnique({ where: { id: data.problems[0].id } });
-      if (existingProb) {
-        problemId = existingProb.id;
+    if (data.problems && data.problems.length > 0) {
+      const primaryProb = data.problems[0];
+      let dbProb = primaryProb.id
+        ? await prisma.problem.findUnique({ where: { id: primaryProb.id } }).catch(() => null)
+        : null;
+
+      if (!dbProb && primaryProb.title) {
+        dbProb = await prisma.problem.findFirst({
+          where: {
+            title: {
+              equals: primaryProb.title.trim(),
+              mode: 'insensitive',
+            },
+          },
+        });
+      }
+
+      if (!dbProb && primaryProb.title) {
+        const starterCode =
+          primaryProb.starterTemplates?.[data.defaultLanguage || 'typescript'] ||
+          primaryProb.starterTemplates?.typescript ||
+          primaryProb.starterTemplates?.javascript ||
+          primaryProb.starterTemplates?.python ||
+          primaryProb.starterTemplates?.cpp ||
+          primaryProb.starterTemplates?.java ||
+          primaryProb.starterCode ||
+          '';
+
+        const constraintsStr = Array.isArray(primaryProb.constraints)
+          ? primaryProb.constraints.join('\n')
+          : typeof primaryProb.constraints === 'string'
+          ? primaryProb.constraints
+          : '';
+
+        const examplesStr = Array.isArray(primaryProb.examples)
+          ? JSON.stringify(primaryProb.examples)
+          : typeof primaryProb.examples === 'string'
+          ? primaryProb.examples
+          : '[]';
+
+        dbProb = await prisma.problem.create({
+          data: {
+            title: primaryProb.title.trim(),
+            description: primaryProb.description || '',
+            difficulty: (primaryProb.difficulty || 'MEDIUM').toUpperCase(),
+            constraints: constraintsStr,
+            examples: examplesStr,
+            starterCode,
+          },
+        });
+      }
+
+      if (dbProb) {
+        problemId = dbProb.id;
       }
     }
 
@@ -1078,6 +1220,129 @@ export class InterviewService {
     }
 
     return this.mapReportToDto(interview.report);
+  }
+
+  /**
+   * Processes a candidate conversational interaction with the AI Interviewer,
+   * evaluating evidence strictly, preventing hallucinations, and persisting to PostgreSQL.
+   */
+  public async processCandidateAiInteraction(tokenOrId: string, payload: any): Promise<any> {
+    const targetId = this.tokenToUuid(tokenOrId);
+
+    const interview = await prisma.interview.findFirst({
+      where: {
+        OR: [
+          { id: targetId },
+          { id: tokenOrId },
+          { roomId: tokenOrId },
+        ],
+        isDeleted: false,
+      },
+      include: {
+        problem: true,
+        messages: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    if (!interview) {
+      throw new AppError('Interview session not found', 404, 'INTERVIEW_NOT_FOUND');
+    }
+
+    if (interview.status === 'CANCELLED') {
+      throw new AppError('Interview session has been cancelled', 410, 'INTERVIEW_CANCELLED');
+    }
+
+    const candidateMessage = (payload.candidateMessage || payload.prompt || '').trim();
+
+    // Map existing history
+    const dbHistory = interview.messages.map((m) => ({
+      role: (m.senderType === 'CANDIDATE' ? 'user' : 'ai') as 'user' | 'ai',
+      text: m.content,
+      createdAt: m.createdAt,
+    }));
+
+    const activeHistory = payload.history && Array.isArray(payload.history) && payload.history.length > 0
+      ? payload.history
+      : dbHistory;
+
+    // Strict evidence-based evaluation
+    const evaluation = await interviewAiService.evaluateCandidateInteraction({
+      candidateMessage,
+      problemTitle: payload.problemTitle || interview.problem?.title || interview.title || 'Technical Interview Problem',
+      problemDifficulty: payload.problemDifficulty || interview.problem?.difficulty || 'Medium',
+      problemDescription: payload.problemDescription || interview.problem?.description || '',
+      currentCode: payload.currentCode,
+      language: payload.language || interview.language || 'typescript',
+      submissionStatus: payload.submissionStatus,
+      history: activeHistory,
+    });
+
+    // Persist candidate message if non-empty
+    if (candidateMessage.length > 0) {
+      await prisma.interviewMessage.create({
+        data: {
+          interviewId: interview.id,
+          senderType: 'CANDIDATE',
+          content: candidateMessage,
+          action: 'FOLLOW_UP',
+        },
+      });
+    }
+
+    // Persist AI response
+    const createdAiMessage = await prisma.interviewMessage.create({
+      data: {
+        interviewId: interview.id,
+        senderType: 'AI_INTERVIEWER',
+        content: evaluation.response,
+        action: 'FOLLOW_UP',
+      },
+    });
+
+    return {
+      id: createdAiMessage.id,
+      response: evaluation.response,
+      finishReason: evaluation.finishReason,
+      isTruncated: evaluation.isTruncated,
+      time: new Date(createdAiMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+  }
+
+  /**
+   * Retrieves full persisted AI Interviewer conversation history for candidate.
+   */
+  public async getCandidateAiHistory(tokenOrId: string): Promise<any[]> {
+    const targetId = this.tokenToUuid(tokenOrId);
+
+    const interview = await prisma.interview.findFirst({
+      where: {
+        OR: [
+          { id: targetId },
+          { id: tokenOrId },
+          { roomId: tokenOrId },
+        ],
+        isDeleted: false,
+      },
+      include: {
+        messages: {
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+
+    if (!interview) {
+      throw new AppError('Interview session not found', 404, 'INTERVIEW_NOT_FOUND');
+    }
+
+    return interview.messages.map((m) => ({
+      id: m.id,
+      role: m.senderType === 'CANDIDATE' ? 'user' : 'ai',
+      text: m.content,
+      time: new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      createdAt: m.createdAt.toISOString(),
+    }));
   }
 }
 

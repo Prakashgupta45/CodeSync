@@ -128,6 +128,7 @@ export function titleToMethodName(title: string): string {
   if (lower.includes('valid parentheses')) return 'isValid';
   if (lower.includes('number of islands')) return 'numIslands';
   if (lower === 'binary search' || lower.startsWith('binary search')) return 'search';
+  if (lower.includes('lru cache')) return 'LRUCache';
 
   const parts = clean.replace(/[^a-zA-Z0-9\s_-]/g, '').split(/[\s_-]+/);
   if (parts.length === 0) return 'solve';
@@ -390,17 +391,53 @@ class Solution {
       cppReturnStmt = 'return {};';
   }
 
-  const cppTemplate = `// C++ ${headerComment}
-#include <bits/stdc++.h>
+  let cppTemplate: string;
+  if (functionName === 'LRUCache' || title?.toLowerCase().includes('lru cache')) {
+    cppTemplate = `#include <bits/stdc++.h>
 using namespace std;
 
-class Solution {
+class LRUCache {
+public:
+    LRUCache(int capacity) {
+        // Initialize your data structure here
+    }
+
+    int get(int key) {
+        // Write your solution here
+        return -1;
+    }
+
+    void put(int key, int value) {
+        // Write your solution here
+    }
+};`;
+  } else {
+    const listNodeHeader =
+      returnType === 'ListNode' || parameters.some((p) => p.type === 'ListNode')
+        ? `/**
+ * Definition for singly-linked list.
+ * struct ListNode {
+ *     int val;
+ *     ListNode *next;
+ *     ListNode() : val(0), next(nullptr) {}
+ *     ListNode(int x) : val(x), next(nullptr) {}
+ *     ListNode(int x, ListNode *next) : val(x), next(next) {}
+ * };
+ */
+`
+        : '';
+
+    cppTemplate = `#include <bits/stdc++.h>
+using namespace std;
+
+${listNodeHeader}class Solution {
 public:
     ${cppReturnType} ${functionName}(${cppParams}) {
-        // Your code here
+        // Write your solution here
         ${cppReturnStmt}
     }
 };`;
+  }
 
   // Python Generator
   const pyParams = ['self', ...parameters.map((p) => {
@@ -560,6 +597,17 @@ export function getResolvedStarterTemplate(prob: ProblemDefinition, lang: string
     }
   }
 
+  // 1b. Check if the question library has this problem and its curated template
+  const libMatch = QUESTION_LIBRARY.find(
+    (q) => q.id === prob.id || q.title.toLowerCase().trim() === prob.title.toLowerCase().trim()
+  );
+  if (libMatch?.starterTemplates?.[langKey]) {
+    const libTemplate = libMatch.starterTemplates[langKey];
+    if (typeof libTemplate === 'string' && libTemplate.trim().length > 0 && !isParameterlessVoidTemplate(libTemplate)) {
+      return libTemplate;
+    }
+  }
+
   // 2. Infer signature and generate complete parameterized template
   const signature = inferProblemSignature(prob);
   const templates = generateStarterTemplates(signature, prob.title);
@@ -619,9 +667,7 @@ export const QUESTION_LIBRARY: ProblemDefinition[] = [
     expectedSpaceComplexity: 'O(n)',
     marks: 100,
     starterTemplates: {
-      cpp: `#include <iostream>
-#include <vector>
-#include <unordered_map>
+      cpp: `#include <bits/stdc++.h>
 using namespace std;
 
 class Solution {
@@ -1223,6 +1269,124 @@ var search = function(nums, target) {
 function search(nums: number[], target: number): number {
     // Your code here
     return -1;
+}`,
+    },
+  },
+  {
+    id: 'q-lru-cache',
+    title: 'LRU Cache',
+    difficulty: 'Hard',
+    category: 'Design & Data Structures',
+    description:
+      'Design a data structure that follows the constraints of a Least Recently Used (LRU) cache.\n\nImplement the LRUCache class:\n- LRUCache(int capacity) Initialize the LRU cache with positive size capacity.\n- int get(int key) Return the value of the key if the key exists, otherwise return -1.\n- void put(int key, int value) Update the value of the key if the key exists. Otherwise, add the key-value pair to the cache. If the number of keys exceeds the capacity from this operation, evict the least recently used key.\n\nThe functions get and put must each run in O(1) average time complexity.',
+    inputFormat: 'capacity = 2, operations = put(1,1), put(2,2), get(1), put(3,3), get(2)',
+    outputFormat: '[1, -1]',
+    constraints: [
+      '1 <= capacity <= 3000',
+      '0 <= key <= 10^4',
+      '0 <= value <= 10^5',
+      'At most 2 * 10^5 calls will be made to get and put.',
+    ],
+    examples: [
+      {
+        input: 'LRUCache cache = new LRUCache(2);\ncache.put(1, 1);\ncache.put(2, 2);\ncache.get(1); // returns 1\ncache.put(3, 3); // evicts key 2\ncache.get(2); // returns -1 (not found)',
+        output: '1, -1',
+        explanation: 'key 2 was evicted because it was least recently used.',
+      },
+    ],
+    visibleTestCases: [
+      { id: 1, input: 'capacity = 2, operations: put(1,1), put(2,2), get(1)', expectedOutput: '1' },
+      { id: 2, input: 'capacity = 2, operations: put(3,3), get(2)', expectedOutput: '-1' },
+      { id: 3, input: 'capacity = 2, operations: put(4,4), get(1), get(3), get(4)', expectedOutput: '[-1, 3, 4]' },
+    ],
+    hiddenTestCases: [
+      { id: 4, input: 'capacity = 1, operations: put(2,1), get(2), put(3,2), get(2), get(3)', expectedOutput: '[1, -1, 2]' },
+      { id: 5, input: 'capacity = 3, operations: put(1,1), put(2,2), put(3,3), put(4,4), get(4), get(3), get(2), get(1)', expectedOutput: '[4, 3, 2, -1]' },
+    ],
+    hiddenTestCount: 2,
+    expectedTimeComplexity: 'O(1)',
+    expectedSpaceComplexity: 'O(capacity)',
+    marks: 100,
+    starterTemplates: {
+      cpp: `#include <bits/stdc++.h>
+using namespace std;
+
+class LRUCache {
+public:
+    LRUCache(int capacity) {
+        // Initialize your data structure here
+    }
+
+    int get(int key) {
+        // Write your solution here
+    }
+
+    void put(int key, int value) {
+        // Write your solution here
+    }
+};`,
+      java: `class LRUCache {
+    public LRUCache(int capacity) {
+        // Initialize your data structure here
+    }
+
+    public int get(int key) {
+        // Write your solution here
+        return -1;
+    }
+
+    public void put(int key, int value) {
+        // Write your solution here
+    }
+}`,
+      python: `class LRUCache:
+    def __init__(self, capacity: int):
+        # Initialize your data structure here
+        pass
+
+    def get(self, key: int) -> int:
+        # Write your solution here
+        return -1
+
+    def put(self, key: int, value: int) -> None:
+        # Write your solution here
+        pass`,
+      javascript: `/**
+ * @param {number} capacity
+ */
+var LRUCache = function(capacity) {
+    // Initialize your data structure here
+};
+
+/**
+ * @param {number} key
+ * @return {number}
+ */
+LRUCache.prototype.get = function(key) {
+    // Write your solution here
+};
+
+/**
+ * @param {number} key
+ * @param {number} value
+ * @return {void}
+ */
+LRUCache.prototype.put = function(key, value) {
+    // Write your solution here
+};`,
+      typescript: `class LRUCache {
+    constructor(capacity: number) {
+        // Initialize your data structure here
+    }
+
+    get(key: number): number {
+        // Write your solution here
+        return -1;
+    }
+
+    put(key: number, value: number): void {
+        // Write your solution here
+    }
 }`,
     },
   },

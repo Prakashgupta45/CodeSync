@@ -176,6 +176,13 @@ export default function CandidateJoinPage() {
             </div>
 
             <div className="info-box">
+              <span className="lbl">Target Problem</span>
+              <strong className="text-replit-orange">
+                {interview.problems?.[0]?.title || interview.title}
+              </strong>
+            </div>
+
+            <div className="info-box">
               <span className="lbl">Duration</span>
               <strong>
                 <Clock size={13} style={{ display: 'inline', marginRight: '4px' }} />

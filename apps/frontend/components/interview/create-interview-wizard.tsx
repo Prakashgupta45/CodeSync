@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   QUESTION_LIBRARY,
   ProblemDefinition,
@@ -40,6 +40,7 @@ interface CreateInterviewWizardProps {
   isOpen: boolean;
   onClose: () => void;
   onInterviewCreated: (interview: InterviewItem) => void;
+  initialProblem?: ProblemDefinition | null;
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api/v1';
@@ -48,6 +49,7 @@ export function CreateInterviewWizard({
   isOpen,
   onClose,
   onInterviewCreated,
+  initialProblem,
 }: CreateInterviewWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
@@ -118,6 +120,23 @@ export function CreateInterviewWizard({
   const [isCopied, setIsCopied] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Synchronize wizard with selected initialProblem whenever opened
+  useEffect(() => {
+    if (isOpen) {
+      if (initialProblem) {
+        setSelectedProblems([initialProblem]);
+        setTitle(`${initialProblem.title} — Technical Assessment`);
+      } else {
+        setSelectedProblems([QUESTION_LIBRARY[0]]);
+        setTitle('SDE II — Technical Coding Assessment');
+      }
+      setStep(1);
+      setCreatedInterview(null);
+      setErrorMsg(null);
+      setIsSubmitting(false);
+    }
+  }, [isOpen, initialProblem]);
 
   if (!isOpen) return null;
 
@@ -298,7 +317,12 @@ export function CreateInterviewWizard({
     try {
       // Ensure custom problem input is committed
       const activeProblems = ensureCustomProblemCommitted();
-      const finalProblems = activeProblems.length > 0 ? activeProblems : [QUESTION_LIBRARY[0]];
+      if (activeProblems.length === 0) {
+        setErrorMsg('Please select at least one coding problem from the library or create a custom problem.');
+        setIsSubmitting(false);
+        return;
+      }
+      const finalProblems = activeProblems;
 
       const payload = {
         title: title.trim(),
@@ -605,22 +629,37 @@ export function CreateInterviewWizard({
                   <div className="iw-selected-bar">
                     <span className="font-bold text-xs">Assigned Problems ({selectedProblems.length}):</span>
                     <div className="iw-assigned-chips">
-                      {selectedProblems.map((p, idx) => (
-                        <span key={p.id} className="iw-assigned-chip">
-                          <span>{p.title}</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (selectedProblems.length > 1) {
+                      {selectedProblems.length === 0 ? (
+                        <span className="text-xs text-text-muted italic">No problem selected yet. Please select at least one problem below.</span>
+                      ) : (
+                        selectedProblems.map((p, idx) => (
+                          <span key={p.id} className="iw-assigned-chip">
+                            <span
+                              onClick={() => {
+                                if (idx > 0) {
+                                  setSelectedProblems([
+                                    p,
+                                    ...selectedProblems.filter((_, i) => i !== idx),
+                                  ]);
+                                }
+                              }}
+                              style={{ cursor: idx > 0 ? 'pointer' : 'default' }}
+                              title={idx === 0 ? 'Primary Interview Problem' : 'Click to make Primary'}
+                            >
+                              {idx === 0 ? `★ ${p.title} (Primary)` : p.title}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
                                 setSelectedProblems(selectedProblems.filter((_, i) => i !== idx));
-                              }
-                            }}
-                            title="Remove Question"
-                          >
-                            ×
-                          </button>
-                        </span>
-                      ))}
+                              }}
+                              title="Remove Question"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))
+                      )}
                     </div>
                   </div>
 
@@ -688,11 +727,15 @@ export function CreateInterviewWizard({
                               className={`iw-question-card ${isSelected ? 'selected' : ''}`}
                               onClick={() => {
                                 if (isSelected) {
-                                  if (selectedProblems.length > 1) {
-                                    setSelectedProblems(selectedProblems.filter((p) => p.id !== q.id));
-                                  }
+                                  setSelectedProblems(selectedProblems.filter((p) => p.id !== q.id));
                                 } else {
-                                  setSelectedProblems([...selectedProblems, q]);
+                                  const isOnlyDefaultTwoSum =
+                                    selectedProblems.length === 1 && selectedProblems[0].id === 'q-two-sum';
+                                  if (isOnlyDefaultTwoSum && q.id !== 'q-two-sum') {
+                                    setSelectedProblems([q]);
+                                  } else if (selectedProblems.length < 5) {
+                                    setSelectedProblems([...selectedProblems, q]);
+                                  }
                                 }
                               }}
                             >

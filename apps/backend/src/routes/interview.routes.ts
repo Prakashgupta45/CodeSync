@@ -4,8 +4,10 @@ import { interviewController } from '../controllers/interview.controller';
 
 const router = Router();
 
-// Public / Candidate endpoints (candidate token validation & submission recording)
+// Public / Candidate endpoints (candidate token validation, AI interaction & submission recording)
 router.get('/token/:token', (req, res, next) => interviewController.getCandidateInterview(req, res, next));
+router.get('/token/:token/ai', (req, res, next) => interviewController.getCandidateAiHistory(req, res, next));
+router.post('/token/:token/ai', (req, res, next) => interviewController.promptCandidateAi(req, res, next));
 router.post('/token/:token/record-submission', (req, res, next) => interviewController.recordSubmission(req, res, next));
 
 // Authenticated HR endpoints (enforcing JWT cookie / session ownership)

@@ -6,7 +6,12 @@ import { io, Socket } from 'socket.io-client';
 import * as Y from 'yjs';
 import { RoomPresenceUserDto } from '@codesync/shared';
 import { Loader2, Lock } from 'lucide-react';
-import { getStarterCode, getLanguageForFilename } from './language-templates';
+import {
+  getStarterCode,
+  getLanguageForFilename,
+  getDefaultFilenameForLanguage,
+  normalizeLang,
+} from './language-templates';
 
 const API_SOCKET_URL =
   process.env.NEXT_PUBLIC_SOCKET_URL ||
@@ -40,7 +45,7 @@ interface RealtimeEditorProps {
   onDocInit?: (docApi: DocApi) => void;
   onCodeChange?: (code: string) => void;
   initialContent?: string;
-  onEditorMount?: (editor: any) => void;
+  onEditorMount?: (editor: any, monaco?: any) => void;
 }
 
 export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
@@ -48,8 +53,8 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
   language,
   role,
   user,
-  activeFile = 'solution.ts',
-  primaryFile = 'solution.ts',
+  activeFile: activeFileProp,
+  primaryFile: primaryFileProp,
   workspaceFiles,
   onWorkspaceFilesSync,
   onLanguageUpdate,
@@ -62,6 +67,9 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
   initialContent,
   onEditorMount,
 }) => {
+  const defaultFile = getDefaultFilenameForLanguage(language);
+  const activeFile = activeFileProp || defaultFile;
+  const primaryFile = primaryFileProp || activeFile;
   const editorRef = useRef<any>(null);
   const monacoRef = useRef<any>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -73,6 +81,7 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
   const activeFileRef = useRef<string>(activeFile);
   const primaryFileRef = useRef<string>(primaryFile);
   const currentBoundFileRef = useRef<string | null>(null);
+  const markerListenerRef = useRef<any>(null);
   const onCodeChangeRef = useRef(onCodeChange);
   const onLanguageUpdateRef = useRef(onLanguageUpdate);
   const onPresenceUpdateRef = useRef(onPresenceUpdate);
@@ -128,42 +137,20 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
 
   // Map language string or filename to Monaco editor language identifier
   const getMonacoLanguage = useCallback((lang: string, filename?: string): string => {
+    // 1. If filename has an explicit extension that determines language, prefer it
+    // EXCEPT when filename is generic solution.ts while lang is explicitly something else
     if (filename) {
       const derived = getLanguageForFilename(filename);
       if (derived) {
+        const normLang = normalizeLang(lang);
+        if (normLang && normLang !== 'typescript' && derived === 'typescript' && filename === 'solution.ts') {
+          return normLang === 'csharp' ? 'csharp' : normLang;
+        }
         return derived === 'csharp' ? 'csharp' : derived;
       }
     }
-    const l = (lang || '').toLowerCase().trim();
-    switch (l) {
-      case 'c':
-        return 'c';
-      case 'cpp':
-      case 'c++':
-        return 'cpp';
-      case 'java':
-        return 'java';
-      case 'python':
-      case 'py':
-        return 'python';
-      case 'typescript':
-      case 'ts':
-        return 'typescript';
-      case 'go':
-      case 'golang':
-        return 'go';
-      case 'rust':
-      case 'rs':
-        return 'rust';
-      case 'csharp':
-      case 'c#':
-      case 'cs':
-        return 'csharp';
-      case 'javascript':
-      case 'js':
-      default:
-        return 'javascript';
-    }
+    const l = normalizeLang(lang);
+    return l === 'csharp' ? 'csharp' : (l || 'plaintext');
   }, []);
 
   // Helper to obtain Y.Text for a given filename
@@ -185,6 +172,31 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
     }
 
     return specificText;
+  }, []);
+
+  // Helper to scrub any non-compiler markers from non-TS/JS models
+  const clearForeignMarkersForModel = useCallback((monaco: any, model: any) => {
+    if (!monaco || !model) return;
+    const langId = model.getLanguageId();
+    if (langId !== 'typescript' && langId !== 'javascript') {
+      try {
+        const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+        const foreignOwners = new Set<string>();
+        for (const mk of markers) {
+          if (mk.owner && mk.owner !== 'compiler') {
+            foreignOwners.add(mk.owner);
+          } else if (!mk.owner) {
+            foreignOwners.add('');
+          }
+        }
+        for (const owner of foreignOwners) {
+          monaco.editor.setModelMarkers(model, owner, []);
+        }
+        monaco.editor.setModelMarkers(model, 'typescript', []);
+        monaco.editor.setModelMarkers(model, 'javascript', []);
+        monaco.editor.setModelMarkers(model, 'typescript-language-features', []);
+      } catch (_) {}
+    }
   }, []);
 
   // Attach Y.Text observer to sync changes into Monaco
@@ -329,11 +341,14 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
         const model = editor.getModel();
         if (monaco && model) {
           const langId = getMonacoLanguage(language, targetFile);
-          monaco.editor.setModelLanguage(model, langId);
+          if (model.getLanguageId() !== langId) {
+            monaco.editor.setModelLanguage(model, langId);
+          }
+          clearForeignMarkersForModel(monaco, model);
         }
       }
     },
-    [getMonacoLanguage, language]
+    [clearForeignMarkersForModel, getMonacoLanguage, language]
   );
 
   // Switch active file when activeFile prop changes
@@ -351,6 +366,7 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
         if (model.getLanguageId() !== langId) {
           monaco.editor.setModelLanguage(model, langId);
         }
+        clearForeignMarkersForModel(monaco, model);
       }
       return;
     }
@@ -377,21 +393,96 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
     const model = editor.getModel();
     if (monaco && model) {
       const langId = getMonacoLanguage(language, activeFile);
-      monaco.editor.setModelLanguage(model, langId);
+      if (model.getLanguageId() !== langId) {
+        monaco.editor.setModelLanguage(model, langId);
+      }
+      clearForeignMarkersForModel(monaco, model);
     }
-  }, [activeFile, bindYTextToEditor, getMonacoLanguage, getYTextForFile, language]);
+  }, [activeFile, bindYTextToEditor, clearForeignMarkersForModel, getMonacoLanguage, getYTextForFile, language]);
+
+  const configureMonacoDiagnostics = useCallback((monaco: any) => {
+    try {
+      if (monaco?.languages?.typescript) {
+        const noDiags = {
+          noSemanticValidation: true,
+          noSyntaxValidation: true,
+          noSuggestionDiagnostics: true,
+        };
+        const noDiagnosticsMode = {
+          diagnostics: false,
+          completionItems: true,
+          hovers: true,
+          documentSymbols: true,
+          definitions: true,
+          references: true,
+          documentHighlights: true,
+          rename: true,
+        };
+        monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions(noDiags);
+        monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions(noDiags);
+        monaco.languages.typescript.typescriptDefaults.setModeConfiguration(noDiagnosticsMode);
+        monaco.languages.typescript.javascriptDefaults.setModeConfiguration(noDiagnosticsMode);
+      }
+    } catch (_) {}
+  }, []);
+
+  const handleBeforeMount = useCallback((monaco: any) => {
+    configureMonacoDiagnostics(monaco);
+  }, [configureMonacoDiagnostics]);
 
   const handleEditorDidMount: OnMount = useCallback(
     (editor, monaco) => {
       editorRef.current = editor;
       monacoRef.current = monaco;
 
+      // Ensure TypeScript/JavaScript workers never pollute non-JS/TS code with syntax errors
+      configureMonacoDiagnostics(monaco);
+
+      // Continuous marker listener: strip any non-compiler markers from non-TS/JS models
+      try {
+        if (markerListenerRef.current) {
+          markerListenerRef.current.dispose();
+        }
+        let isClearingMarkers = false;
+        markerListenerRef.current = monaco.editor.onDidChangeMarkers(() => {
+          if (isClearingMarkers) return;
+          const currentEditor = editorRef.current;
+          if (!currentEditor) return;
+          const currentModel = currentEditor.getModel();
+          if (!currentModel) return;
+          const lang = currentModel.getLanguageId();
+          if (lang !== 'typescript' && lang !== 'javascript') {
+            const markers = monaco.editor.getModelMarkers({ resource: currentModel.uri });
+            const hasForeignMarkers = markers.some((mk: any) => mk.owner !== 'compiler');
+            if (hasForeignMarkers) {
+              isClearingMarkers = true;
+              try {
+                clearForeignMarkersForModel(monaco, currentModel);
+              } finally {
+                setTimeout(() => {
+                  isClearingMarkers = false;
+                }, 50);
+              }
+            }
+          }
+        });
+      } catch (_) {}
+
       if (onCodeGetterInit) {
         onCodeGetterInit(() => editor.getValue());
       }
 
       if (onEditorMount) {
-        onEditorMount(editor);
+        onEditorMount(editor, monaco);
+      }
+
+      const model = editor.getModel();
+      if (monaco && model) {
+        const langId = getMonacoLanguage(language, activeFileRef.current);
+        if (model.getLanguageId() !== langId) {
+          monaco.editor.setModelLanguage(model, langId);
+        }
+        clearForeignMarkersForModel(monaco, model);
       }
 
       editor.updateOptions({
@@ -600,6 +691,10 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
 
         const updatedVal = editor.getValue();
         onCodeChangeRef.current?.(updatedVal);
+        const currentModel = editor.getModel();
+        if (currentModel && monaco) {
+          clearForeignMarkersForModel(monaco, currentModel);
+        }
       });
 
       // Broadcast Yjs updates to Socket.IO server
@@ -612,11 +707,14 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
         }
       });
     },
-    [bindYTextToEditor, getYTextForFile, onCodeGetterInit, onDocInit, onEditorMount, onSocketInit, roomId, user.id]
+    [bindYTextToEditor, clearForeignMarkersForModel, getMonacoLanguage, getYTextForFile, language, onCodeGetterInit, onDocInit, onEditorMount, onSocketInit, roomId, user.id]
   );
 
   useEffect(() => {
     return () => {
+      if (markerListenerRef.current) {
+        markerListenerRef.current.dispose();
+      }
       if (observerCleanupRef.current) {
         observerCleanupRef.current();
       }
@@ -642,7 +740,9 @@ export const RealtimeEditorComponent: React.FC<RealtimeEditorProps> = ({
         <Editor
           height="100%"
           language={getMonacoLanguage(language, activeFile)}
+          path={activeFile}
           theme="vs-dark"
+          beforeMount={handleBeforeMount}
           options={{
             readOnly: isReadOnly,
             fontSize: 13,

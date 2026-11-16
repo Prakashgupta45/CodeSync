@@ -114,9 +114,25 @@ export const executePortalInterviewSchema = z.object({
   code: z.string().min(1).max(50000),
 });
 
-export const aiPortalInterviewSchema = z.object({
-  action: z.string().trim().min(1).max(50).default('CHAT'),
-  prompt: z.string().max(4000).optional(),
-  code: z.string().max(50000).optional(),
-  errorContext: z.string().max(4000).optional(),
-});
+export const aiPortalInterviewSchema = z
+  .object({
+    action: z.string().trim().min(1).max(50).default('CHAT'),
+    prompt: z.string().max(10000).optional(),
+    code: z.string().max(50000).optional(),
+    errorContext: z.string().max(10000).optional(),
+    candidateMessage: z.string().max(10000).optional(),
+    problemTitle: z.string().max(250).optional(),
+    problemDifficulty: z.string().max(50).optional(),
+    problemDescription: z.string().max(20000).optional(),
+    language: z.string().max(50).optional(),
+    submissionStatus: z.string().max(50).optional(),
+    history: z
+      .array(
+        z.object({
+          role: z.string(),
+          text: z.string(),
+        })
+      )
+      .optional(),
+  })
+  .passthrough();

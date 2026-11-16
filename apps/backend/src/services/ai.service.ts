@@ -6,6 +6,7 @@ import {
   formatLlmFailureSummary,
   generateWithLlmFallbackDetailed,
 } from '../utils/llm-client';
+import { interviewAiService } from './interview-ai.service';
 
 // In-Memory Rate Limiting: Max 10 AI prompts per 60 seconds per user
 const rateLimitMap = new Map<string, number[]>();
@@ -283,24 +284,85 @@ export class AiService {
     }
 
     // 4. Generate AI Intelligence Output
-    const aiResponseText = await this.generateLlmResponse(
-      validationResult.data.action as AiActionType,
-      validationResult.data.prompt || '',
-      sourceCode,
-      language,
-      errorContext,
-      clientSignal
-    );
+    let aiResponseText: string;
+
+    // If this is an interview room, use evidence-based interview AI evaluation
+    const isInterviewRoom = roomId.startsWith('room-interview-');
+    if (isInterviewRoom) {
+      const interview = await prisma.interview.findFirst({
+        where: { roomId, isDeleted: false },
+        include: {
+          problem: true,
+          messages: { orderBy: { createdAt: 'asc' } },
+        },
+      });
+
+      if (interview) {
+        const candidateInteraction = await interviewAiService.evaluateCandidateInteraction({
+          candidateMessage: validationResult.data.prompt || '',
+          problemTitle: interview.problem?.title || interview.title || 'Technical Interview Problem',
+          problemDifficulty: interview.problem?.difficulty || 'Medium',
+          problemDescription: interview.problem?.description || '',
+          currentCode: sourceCode,
+          language: language !== 'unknown' ? language : (interview.language || 'typescript'),
+          history: interview.messages.map((m) => ({
+            role: m.senderType === 'CANDIDATE' ? 'user' : 'ai',
+            text: m.content,
+            createdAt: m.createdAt,
+          })),
+        });
+        aiResponseText = candidateInteraction.response;
+
+        // Persist to interview messages table as well
+        if (validationResult.data.prompt && validationResult.data.prompt.trim().length > 0) {
+          await prisma.interviewMessage.create({
+            data: {
+              interviewId: interview.id,
+              senderType: 'CANDIDATE',
+              content: validationResult.data.prompt.trim(),
+              action: 'FOLLOW_UP',
+            },
+          }).catch(() => null);
+        }
+        await prisma.interviewMessage.create({
+          data: {
+            interviewId: interview.id,
+            senderType: 'AI_INTERVIEWER',
+            content: aiResponseText,
+            action: 'FOLLOW_UP',
+          },
+        }).catch(() => null);
+      } else {
+        aiResponseText = await this.generateLlmResponse(
+          validationResult.data.action as AiActionType,
+          validationResult.data.prompt || '',
+          sourceCode,
+          language,
+          errorContext,
+          clientSignal
+        );
+      }
+    } else {
+      aiResponseText = await this.generateLlmResponse(
+        validationResult.data.action as AiActionType,
+        validationResult.data.prompt || '',
+        sourceCode,
+        language,
+        errorContext,
+        clientSignal
+      );
+    }
 
     let messageId = `msg-${Date.now()}`;
     let createdAtIso = new Date().toISOString();
 
     if (room) {
       // 5. Persist AI Message in PostgreSQL Database
+      // For verified candidate sessions, attribute DB foreign key to room owner while keeping DTO candidate-attributed
       const dbRecord = await prisma.aiMessage.create({
         data: {
           roomId,
-          userId: executor.id,
+          userId: isVerifiedCandidate ? room.ownerId : executor.id,
           prompt: validationResult.data.prompt || '',
           response: aiResponseText,
           action: validationResult.data.action,

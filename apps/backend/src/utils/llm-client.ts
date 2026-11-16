@@ -25,6 +25,8 @@ export interface LlmCompletionResult {
   provider: LlmProviderName;
   model: string;
   latencyMs: number;
+  finishReason?: string;
+  isTruncated?: boolean;
 }
 
 export interface LlmProviderFailure {
@@ -229,7 +231,22 @@ async function callGeminiProvider(params: {
       };
     }
 
-    const extracted = params.extractText(payload)?.trim();
+    const extractedContent = extractGeminiContent(payload);
+    const extracted = extractedContent?.text?.trim() || params.extractText(payload)?.trim();
+    const finishReason = extractedContent?.finishReason || 'STOP';
+    const isTruncated = Boolean(extractedContent?.isTruncated);
+
+    if (isTruncated) {
+      logger.warn('LLM provider response truncated due to MAX_TOKENS limit', {
+        provider: 'gemini' as LlmProviderName,
+        model: params.model,
+        durationMs: latencyMs,
+        timeoutThresholdMs: params.timeoutMs,
+        finishReason,
+        context: params.contextLabel,
+      });
+    }
+
     if (!extracted) {
       logger.warn('LLM provider returned empty content; advancing to offline fallback', {
         provider: 'gemini' as LlmProviderName,
@@ -257,6 +274,8 @@ async function callGeminiProvider(params: {
       promptCharCount: params.promptCharCount,
       contextCharCount: params.contextCharCount,
       httpStatus: status,
+      finishReason,
+      isTruncated,
       context: params.contextLabel,
     });
 
@@ -266,6 +285,8 @@ async function callGeminiProvider(params: {
         provider: 'gemini',
         model: params.model,
         latencyMs,
+        finishReason,
+        isTruncated,
       },
     };
   } catch (err) {
@@ -310,27 +331,71 @@ async function callGeminiProvider(params: {
   }
 }
 
-function extractGeminiText(data: unknown): string | undefined {
+export interface GeminiExtractionResult {
+  text?: string;
+  finishReason?: string;
+  isTruncated?: boolean;
+}
+
+/**
+ * Cleanly trims truncated LLM responses on sentence/punctuation boundaries
+ * so incomplete sentences or cut-off half words are not presented to users.
+ */
+export function sanitizeTruncatedText(rawText: string, isTruncated: boolean = true): string {
+  if (!isTruncated || !rawText) return rawText;
+  const trimmed = rawText.trim();
+  if (/[.?!]\s*$/.test(trimmed)) {
+    return trimmed;
+  }
+  const lastPunctIdx = Math.max(
+    trimmed.lastIndexOf('.'),
+    trimmed.lastIndexOf('?'),
+    trimmed.lastIndexOf('!')
+  );
+  if (lastPunctIdx > 30) {
+    return trimmed.slice(0, lastPunctIdx + 1).trim();
+  }
+  return trimmed + '...';
+}
+
+export function extractGeminiContent(data: unknown): GeminiExtractionResult | undefined {
   if (typeof data !== 'object' || data === null) return undefined;
-  const candidates = (
+  const candidate = (
     data as {
       candidates?: Array<{
+        finishReason?: string;
         content?: {
           parts?: Array<{ text?: unknown; thought?: unknown }>;
         };
       }>;
     }
-  ).candidates;
-  const parts = candidates?.[0]?.content?.parts;
-  if (!Array.isArray(parts) || parts.length === 0) return undefined;
+  ).candidates?.[0];
+
+  const finishReason = candidate?.finishReason || 'STOP';
+  const isTruncated = finishReason === 'MAX_TOKENS';
+  const parts = candidate?.content?.parts;
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return { finishReason, isTruncated };
+  }
+
   const answerPart = parts.find(
     (part) => !part?.thought && typeof part?.text === 'string' && part.text.trim().length > 0
   );
-  if (answerPart && typeof answerPart.text === 'string') {
-    return answerPart.text;
+  let text = typeof answerPart?.text === 'string' ? answerPart.text : undefined;
+  if (!text) {
+    const firstText = parts[0]?.text;
+    text = typeof firstText === 'string' ? firstText : undefined;
   }
-  const firstText = parts[0]?.text;
-  return typeof firstText === 'string' ? firstText : undefined;
+
+  return {
+    text: text ? sanitizeTruncatedText(text, isTruncated) : undefined,
+    finishReason,
+    isTruncated,
+  };
+}
+
+function extractGeminiText(data: unknown): string | undefined {
+  return extractGeminiContent(data)?.text;
 }
 
 /**

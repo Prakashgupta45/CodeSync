@@ -43,6 +43,7 @@ export default function InterviewDashboardPage() {
   // Interviews Registry State
   const [interviews, setInterviews] = useState<InterviewItem[]>([]);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [selectedProblemForWizard, setSelectedProblemForWizard] = useState<ProblemDefinition | null>(null);
 
   // Active Main Tab
   const [activeTab, setActiveTab] = useState<'interviews' | 'library' | 'candidates' | 'reports'>('interviews');
@@ -455,7 +456,10 @@ export default function InterviewDashboardPage() {
               </div>
               <button
                 type="button"
-                onClick={() => setIsWizardOpen(true)}
+                onClick={() => {
+                  setSelectedProblemForWizard(null);
+                  setIsWizardOpen(true);
+                }}
                 className="iw-btn-primary"
               >
                 <Plus size={14} /> Add Problem to Interview
@@ -644,8 +648,12 @@ export default function InterviewDashboardPage() {
       {/* CREATE INTERVIEW WIZARD MODAL */}
       <CreateInterviewWizard
         isOpen={isWizardOpen}
-        onClose={() => setIsWizardOpen(false)}
+        onClose={() => {
+          setIsWizardOpen(false);
+          setSelectedProblemForWizard(null);
+        }}
         onInterviewCreated={handleInterviewCreated}
+        initialProblem={selectedProblemForWizard}
       />
 
       {/* QUESTION PREVIEW MODAL */}
@@ -714,6 +722,7 @@ export default function InterviewDashboardPage() {
                 type="button"
                 className="iw-btn-primary wide"
                 onClick={() => {
+                  setSelectedProblemForWizard(previewProblem);
                   setPreviewProblem(null);
                   setIsWizardOpen(true);
                 }}

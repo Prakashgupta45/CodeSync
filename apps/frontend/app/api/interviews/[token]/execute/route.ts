@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { executePortalInterviewSchema } from '@codesync/shared';
-import { readInterviewsStore } from '@/lib/interview-store';
 import { getBackendApiBaseUrl, signCandidateInterviewToken } from '@/lib/server-auth';
 
 export async function POST(
@@ -9,8 +8,24 @@ export async function POST(
 ) {
   try {
     const { token } = await params;
-    const list = readInterviewsStore();
-    const interview = list.find((i) => i.token === token);
+    const interviewRes = await fetch(`${getBackendApiBaseUrl()}/api/v1/interviews/token/${token}`);
+
+    if (interviewRes.status === 410) {
+      return NextResponse.json(
+        { success: false, error: { message: 'Interview session has been cancelled' } },
+        { status: 410 }
+      );
+    }
+
+    if (!interviewRes.ok) {
+      return NextResponse.json(
+        { success: false, error: { message: 'Interview session not found' } },
+        { status: 404 }
+      );
+    }
+
+    const payload = await interviewRes.json();
+    const interview = payload?.data;
 
     if (!interview) {
       return NextResponse.json(

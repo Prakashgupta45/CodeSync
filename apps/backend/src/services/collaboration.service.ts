@@ -34,13 +34,13 @@ int main() {
 `;
       case 'cpp':
       case 'c++':
-        return `// CodeSync AI - ${roomName || 'C++ Workspace'}
-#include <iostream>
+        return `#include <bits/stdc++.h>
+using namespace std;
 
-int main() {
-    std::cout << "Hello, CodeSync AI!" << std::endl;
-    return 0;
-}
+class Solution {
+public:
+    // Write your solution here
+};
 `;
       case 'java':
         return `// CodeSync AI - ${roomName || 'Java Workspace'}
@@ -135,9 +135,12 @@ main();
       }
     } else {
       // 2. Initialize default template if no saved document exists
+      const isInterviewRoom = roomId.startsWith('room-interview-');
       const room = await prisma.room.findUnique({ where: { id: roomId } });
-      const starterCode = this.getDefaultStarterCode(language, room?.name);
-      yText.insert(0, starterCode);
+      const starterCode = isInterviewRoom ? '' : this.getDefaultStarterCode(language, room?.name);
+      if (starterCode) {
+        yText.insert(0, starterCode);
+      }
 
       // Only attempt DB persistence if room actually exists in database
       if (room) {

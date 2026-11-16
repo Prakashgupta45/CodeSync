@@ -196,6 +196,7 @@ function detectMethodName(
   if (problemId === 'q-valid-parentheses' || /\bisValid\b/.test(rawCode)) return 'isValid';
   if (problemId === 'q-number-of-islands' || /\bnumIslands\b/.test(rawCode)) return 'numIslands';
   if (problemId === 'q-binary-search') return 'search';
+  if (problemId === 'q-lru-cache' || /\bLRUCache\b/.test(rawCode)) return 'LRUCache';
 
   const pyMatch = rawCode.match(/def\s+([a-zA-Z0-9_]+)\s*\(/);
   if (pyMatch?.[1] && pyMatch[1] !== '__init__') return pyMatch[1];
@@ -243,6 +244,35 @@ function buildMissingCppHeaders(rawCode: string): string {
   return lines.join('\n');
 }
 
+function hasActualListNodeDefinition(code: string): boolean {
+  const clean = code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  return /\bstruct\s+ListNode\b|\bclass\s+ListNode\b/.test(clean);
+}
+
+interface LRUOp {
+  type: 'put' | 'get';
+  key: number;
+  val?: number;
+}
+
+function parseLRUOperations(inputStr: string): { capacity: number; ops: LRUOp[] } {
+  const capMatch = inputStr.match(/capacity\s*[:=]\s*(\d+)/i) || inputStr.match(/LRUCache\s*\(\s*(\d+)\s*\)/i);
+  const capacity = capMatch ? parseInt(capMatch[1], 10) : 2;
+  const ops: LRUOp[] = [];
+  const opRegex = /(put|get)\s*\(\s*(-?\d+)(?:\s*,\s*(-?\d+))?\s*\)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = opRegex.exec(inputStr)) !== null) {
+    const op = match[1].toLowerCase();
+    const key = parseInt(match[2], 10);
+    if (op === 'put' && match[3] !== undefined) {
+      ops.push({ type: 'put', key, val: parseInt(match[3], 10) });
+    } else if (op === 'get') {
+      ops.push({ type: 'get', key });
+    }
+  }
+  return { capacity, ops };
+}
+
 function inferReturnType(
   rawCode: string,
   methodName: string,
@@ -259,6 +289,7 @@ function inferReturnType(
   if (problemId === 'q-two-sum' || methodName === 'twoSum') return 'int[]';
   if (problemId === 'q-reverse-linked-list' || methodName === 'reverseList') return 'ListNode';
   if (problemId === 'q-valid-parentheses' || methodName === 'isValid') return 'boolean';
+  if (problemId === 'q-lru-cache' || methodName === 'LRUCache') return 'int';
 
   // Inspect signature in code
   if (new RegExp(`(?:vector<int>|int\\[\\]|List\\[int\\]|number\\[\\])\\s*.*\\b${methodName}\\b`).test(rawCode)) {
@@ -342,11 +373,99 @@ export function generateTestDriver(
     returnType === 'ListNode' || parsedArgs.some((a) => a.type === 'ListNode');
   const argVars = parsedArgs.map((a, i) => `${a.name || `p${i}`}`);
 
+  const isLRUCache = problemId === 'q-lru-cache' || detectedMethod === 'LRUCache';
+  if (isLRUCache) {
+    const { capacity, ops } = parseLRUOperations(inputStr);
+    switch (lang) {
+      case 'cpp': {
+        const headerPrefix = buildMissingCppHeaders(rawCode);
+        const opLines = ops.map((o) =>
+          o.type === 'put'
+            ? `    cache.put(${o.key}, ${o.val ?? 0});`
+            : `    results.push_back(cache.get(${o.key}));`
+        ).join('\n');
+        return `${headerPrefix}\n${rawCode}\n
+int main() {
+    LRUCache cache(${capacity});
+    std::vector<int> results;
+${opLines}
+    if (results.size() == 1) {
+        std::cout << results[0] << std::endl;
+    } else {
+        std::cout << "[";
+        for (size_t i = 0; i < results.size(); ++i) {
+            std::cout << results[i] << (i + 1 < results.size() ? ", " : "");
+        }
+        std::cout << "]" << std::endl;
+    }
+    return 0;
+}`;
+      }
+      case 'java': {
+        const opLines = ops.map((o) =>
+          o.type === 'put'
+            ? `        cache.put(${o.key}, ${o.val ?? 0});`
+            : `        results.add(cache.get(${o.key}));`
+        ).join('\n');
+        return `import java.util.*;\n${rawCode}\n
+public class Main {
+    public static void main(String[] args) {
+        LRUCache cache = new LRUCache(${capacity});
+        List<Integer> results = new ArrayList<>();
+${opLines}
+        if (results.size() == 1) {
+            System.out.println(results.get(0));
+        } else {
+            System.out.print("[");
+            for (int i = 0; i < results.size(); i++) {
+                System.out.print(results.get(i) + (i + 1 < results.size() ? ", " : ""));
+            }
+            System.out.println("]");
+        }
+    }
+}`;
+      }
+      case 'python': {
+        const opLines = ops.map((o) =>
+          o.type === 'put'
+            ? `    cache.put(${o.key}, ${o.val ?? 0})`
+            : `    results.append(cache.get(${o.key}))`
+        ).join('\n');
+        return `${rawCode}\n
+if __name__ == '__main__':
+    cache = LRUCache(${capacity})
+    results = []
+${opLines}
+    if len(results) == 1:
+        print(results[0])
+    else:
+        print(str(results).replace(' ', ''))`;
+      }
+      case 'javascript':
+      case 'typescript': {
+        const opLines = ops.map((o) =>
+          o.type === 'put'
+            ? `cache.put(${o.key}, ${o.val ?? 0});`
+            : `results.push(cache.get(${o.key}));`
+        ).join('\n');
+        return `${rawCode}\n
+const cache = new LRUCache(${capacity});
+const results = [];
+${opLines}
+if (results.length === 1) {
+    console.log(results[0]);
+} else {
+    console.log(JSON.stringify(results).replace(/,/g, ', '));
+}`;
+      }
+    }
+  }
+
   switch (lang) {
     case 'cpp': {
       const headerPrefix = buildMissingCppHeaders(rawCode);
       const listNodeDef =
-        needsListNode && !rawCode.includes('struct ListNode')
+        needsListNode && !hasActualListNodeDefinition(rawCode)
           ? `struct ListNode {
     int val;
     ListNode *next;
@@ -393,19 +512,23 @@ export function generateTestDriver(
         })
         .join('\n');
 
+      const hasClassSolution = /\bclass\s+Solution\b/.test(rawCode);
+      const invocation = hasClassSolution ? `sol.${detectedMethod}` : detectedMethod;
+      const solInstantiation = hasClassSolution ? '    Solution sol;\n' : '';
+
       let printBlock = '';
       if (returnType === 'int[]') {
-        printBlock = `    std::vector<int> res = sol.${detectedMethod}(${argVars.join(', ')});
+        printBlock = `    std::vector<int> res = ${invocation}(${argVars.join(', ')});
     std::cout << "[";
     for (size_t i = 0; i < res.size(); ++i) {
         std::cout << res[i] << (i + 1 < res.size() ? ", " : "");
     }
     std::cout << "]" << std::endl;`;
       } else if (returnType === 'boolean') {
-        printBlock = `    bool res = sol.${detectedMethod}(${argVars.join(', ')});
+        printBlock = `    bool res = ${invocation}(${argVars.join(', ')});
     std::cout << (res ? "true" : "false") << std::endl;`;
       } else if (returnType === 'ListNode') {
-        printBlock = `    ListNode* res = sol.${detectedMethod}(${argVars.join(', ')});
+        printBlock = `    ListNode* res = ${invocation}(${argVars.join(', ')});
     std::cout << "[";
     bool first = true;
     while (res) {
@@ -416,17 +539,16 @@ export function generateTestDriver(
     }
     std::cout << "]" << std::endl;`;
       } else if (returnType === 'void') {
-        printBlock = `    sol.${detectedMethod}(${argVars.join(', ')});
+        printBlock = `    ${invocation}(${argVars.join(', ')});
     std::cout << "void" << std::endl;`;
       } else {
-        printBlock = `    auto res = sol.${detectedMethod}(${argVars.join(', ')});
+        printBlock = `    auto res = ${invocation}(${argVars.join(', ')});
     std::cout << res << std::endl;`;
       }
 
       return `${headerPrefix}\n${listNodeDef}\n${rawCode}\n
 int main() {
-    Solution sol;
-${decls}
+${solInstantiation}${decls}
 ${printBlock}
     return 0;
 }`;

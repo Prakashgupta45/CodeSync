@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { readInterviewsStore, writeInterviewsStore } from '@/lib/interview-store';
 import { compareOutputs, generateTestDriver } from '@/lib/test-harness';
 import { QUESTION_LIBRARY } from '@/lib/interview-service';
 import { getBackendApiBaseUrl, signCandidateInterviewToken } from '@/lib/server-auth';
@@ -20,17 +19,33 @@ export async function POST(
       );
     }
 
-    const list = readInterviewsStore();
-    const index = list.findIndex((i) => i.token === token || i.id === token);
+    const backendApiV1 = `${getBackendApiBaseUrl()}/api/v1`;
+    const interviewRes = await fetch(`${backendApiV1}/interviews/token/${token}`);
 
-    if (index === -1) {
+    if (interviewRes.status === 410) {
+      return NextResponse.json(
+        { success: false, error: 'Interview session has been cancelled' },
+        { status: 410 }
+      );
+    }
+
+    if (!interviewRes.ok) {
       return NextResponse.json(
         { success: false, error: 'Interview session not found' },
         { status: 404 }
       );
     }
 
-    const interview = list[index];
+    const payload = await interviewRes.json();
+    const interview = payload?.data;
+
+    if (!interview) {
+      return NextResponse.json(
+        { success: false, error: 'Interview session not found' },
+        { status: 404 }
+      );
+    }
+
     if (interview.status === 'CANCELLED') {
       return NextResponse.json(
         { success: false, error: 'Interview session has been cancelled' },
@@ -39,7 +54,7 @@ export async function POST(
     }
 
     const problem =
-      interview.problems?.find((p) => p.id === problemId) ||
+      interview.problems?.find((p: any) => p.id === problemId) ||
       interview.problems?.[0] ||
       QUESTION_LIBRARY[0];
 
@@ -52,7 +67,6 @@ export async function POST(
 
     const targetRoomId = interview.roomId || `room-interview-${interview.token.replace('cs_inv_', '')}`;
     const signedCandidateJwt = signCandidateInterviewToken(interview.token, targetRoomId);
-    const backendApiV1 = `${getBackendApiBaseUrl()}/api/v1`;
 
     const runSingleCase = async (input: string, expectedOutput: string) => {
       const driverCode = generateTestDriver(
@@ -72,12 +86,12 @@ export async function POST(
         body: JSON.stringify({ code: driverCode, language }),
       });
 
-      const payload = await res.json().catch(() => ({}));
-      const ed = payload?.data;
+      const execPayload = await res.json().catch(() => ({}));
+      const ed = execPayload?.data;
       if (!res.ok || !ed) {
         return {
           passed: false,
-          actualOutput: payload?.error?.message || 'Execution failed',
+          actualOutput: execPayload?.error?.message || 'Execution failed',
           executionTimeMs: 0,
           isCompile: false,
           isTimeout: false,
@@ -124,7 +138,7 @@ export async function POST(
 
     // Evaluate visible test cases
     const evaluatedVisible = await Promise.all(
-      visibleCases.map(async (tc) => {
+      visibleCases.map(async (tc: any) => {
         const result = await runSingleCase(tc.input, tc.expectedOutput);
         totalRuntime += result.executionTimeMs;
         if (result.isCompile) hasCompileError = true;
@@ -163,7 +177,7 @@ export async function POST(
 
     const verdictMessage =
       verdict === 'ACCEPTED'
-        ? `All ${totalCases} test cases passed! Optimal ${problem.expectedTimeComplexity} target.`
+        ? `All ${totalCases} test cases passed! Optimal ${problem.expectedTimeComplexity || 'O(N)'} target.`
         : hasTimeout
         ? 'Execution timed out after 5.0 seconds on test suite.'
         : hasCompileError
@@ -187,12 +201,14 @@ export async function POST(
       completedAt: new Date().toISOString(),
     };
 
-    list[index] = {
-      ...interview,
-      status: 'COMPLETED',
-      submission: submissionRecord,
-    };
-    writeInterviewsStore(list);
+    // Persist completed evaluation and submission record in durable PostgreSQL backend
+    await fetch(`${backendApiV1}/interviews/token/${token}/record-submission`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ submission: submissionRecord }),
+    }).catch(() => null);
 
     return NextResponse.json({
       success: true,

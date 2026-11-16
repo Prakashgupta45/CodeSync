@@ -1,48 +1,50 @@
 import { NextResponse } from 'next/server';
 import { updatePortalInterviewSchema } from '@codesync/shared';
-import {
-  readInterviewsStore,
-  sanitizeInterviewForCandidate,
-  writeInterviewsStore,
-} from '@/lib/interview-store';
-import { getAuthenticatedServerUser } from '@/lib/server-auth';
+import { getAuthenticatedServerUser, getBackendApiBaseUrl } from '@/lib/server-auth';
 
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ token: string }> }
 ) {
   const { token } = await params;
-  const list = readInterviewsStore();
 
-  let found = list.find((i) => i.token === token);
-  if (!found) {
-    const ownerCandidate = list.find((i) => i.id === token);
-    if (ownerCandidate) {
-      const user = await getAuthenticatedServerUser(req);
-      if (user && ownerCandidate.ownerId === user.id) {
-        found = ownerCandidate;
-      }
+  try {
+    const backendRes = await fetch(`${getBackendApiBaseUrl()}/api/v1/interviews/token/${token}`, {
+      method: 'GET',
+      headers: {
+        cookie: req.headers.get('cookie') || '',
+        authorization: req.headers.get('authorization') || '',
+      },
+    });
+
+    if (backendRes.status === 410) {
+      return NextResponse.json(
+        { success: false, error: 'This interview invitation has been cancelled or revoked.' },
+        { status: 410 }
+      );
     }
-  }
 
-  if (!found) {
+    if (backendRes.status === 404) {
+      return NextResponse.json(
+        { success: false, error: 'Interview session not found or link has expired' },
+        { status: 404 }
+      );
+    }
+
+    if (backendRes.ok) {
+      const payload = await backendRes.json();
+      return NextResponse.json(payload);
+    }
+
+    const errorPayload = await backendRes.json().catch(() => ({}));
     return NextResponse.json(
-      { success: false, error: 'Interview session not found or link has expired' },
-      { status: 404 }
+      { success: false, error: errorPayload?.error?.message || 'Failed to fetch interview session' },
+      { status: backendRes.status }
     );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Backend connection error';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
-
-  if (found.status === 'CANCELLED') {
-    return NextResponse.json(
-      { success: false, error: 'This interview invitation has been cancelled or revoked.' },
-      { status: 410 }
-    );
-  }
-
-  return NextResponse.json({
-    success: true,
-    data: sanitizeInterviewForCandidate(found),
-  });
 }
 
 export async function PATCH(
@@ -58,21 +60,6 @@ export async function PATCH(
   }
 
   const { token } = await params;
-  const list = readInterviewsStore();
-  const index = list.findIndex((i) => i.token === token || i.id === token);
-
-  if (index === -1) {
-    return NextResponse.json({ success: false, error: 'Interview not found' }, { status: 404 });
-  }
-
-  const target = list[index];
-  if (!target.ownerId || target.ownerId !== user.id) {
-    return NextResponse.json(
-      { success: false, error: 'You are not authorized to modify this interview' },
-      { status: 403 }
-    );
-  }
-
   const body = await req.json().catch(() => null);
   const parsed = updatePortalInterviewSchema.safeParse(body);
   if (!parsed.success) {
@@ -85,23 +72,28 @@ export async function PATCH(
     );
   }
 
-  const allowedUpdates = parsed.data;
-  const updated = {
-    ...target,
-    ...(allowedUpdates.status !== undefined ? { status: allowedUpdates.status } : {}),
-    ...(allowedUpdates.scheduledDate !== undefined
-      ? { scheduledDate: allowedUpdates.scheduledDate }
-      : {}),
-    ...(allowedUpdates.instructions !== undefined
-      ? { instructions: allowedUpdates.instructions }
-      : {}),
-  };
+  try {
+    const backendRes = await fetch(`${getBackendApiBaseUrl()}/api/v1/interviews/${token}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        cookie: req.headers.get('cookie') || '',
+        authorization: req.headers.get('authorization') || '',
+      },
+      body: JSON.stringify(parsed.data),
+    });
 
-  list[index] = updated;
-  writeInterviewsStore(list);
+    const data = await backendRes.json().catch(() => ({}));
+    if (backendRes.ok) {
+      return NextResponse.json(data);
+    }
 
-  return NextResponse.json({
-    success: true,
-    data: sanitizeInterviewForCandidate(updated),
-  });
+    return NextResponse.json(
+      { success: false, error: data?.error?.message || 'Failed to update interview' },
+      { status: backendRes.status }
+    );
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : 'Backend connection error';
+    return NextResponse.json({ success: false, error: message }, { status: 500 });
+  }
 }

@@ -133,9 +133,75 @@ export function InterviewWorkspace({ roomId, interview: propInterview }: Intervi
   // Execution States
   const [codeGetter, setCodeGetter] = useState<(() => string) | undefined>(undefined);
   const editorInstanceRef = useRef<MonacoEditor.IStandaloneCodeEditor | null>(null);
+  const monacoInstanceRef = useRef<any>(null);
   const [isRunningCode, setIsRunningCode] = useState(false);
   const [isRunningTests, setIsRunningTests] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Clear genuine compiler markers from editor
+  const clearCompilerMarkers = useCallback(() => {
+    if (monacoInstanceRef.current && editorInstanceRef.current) {
+      const model = editorInstanceRef.current.getModel();
+      if (model) {
+        monacoInstanceRef.current.editor.setModelMarkers(model, 'compiler', []);
+      }
+    }
+  }, []);
+
+  // Map genuine Docker compilation error traces to Monaco editor line markers
+  const setCompilerMarkers = useCallback((errorOutput: string) => {
+    if (!monacoInstanceRef.current || !editorInstanceRef.current || !errorOutput) return;
+    const model = editorInstanceRef.current.getModel();
+    if (!model) return;
+
+    const lines = errorOutput.split('\n');
+    const markers: any[] = [];
+    const totalLines = model.getLineCount();
+
+    // Regex for GCC / Clang / Java compiler errors:
+    // "solution.cpp:15:5: error: expected ';' before '}' token"
+    // "Solution.java:14: error: cannot find symbol"
+    const gccRegex = /(?:[a-zA-Z0-9_\-\.\/\\]+):(\d+):(?:(\d+):)?\s*(?:fatal )?(error|warning):\s*(.*)/i;
+
+    for (const l of lines) {
+      const match = l.match(gccRegex);
+      if (match) {
+        const rawLine = parseInt(match[1], 10);
+        const rawCol = match[2] ? parseInt(match[2], 10) : 1;
+        const isWarning = (match[3] || '').toLowerCase() === 'warning';
+        const message = match[4]?.trim() || 'Compiler diagnostic';
+
+        const targetLine = Math.min(Math.max(1, rawLine), totalLines);
+        const maxCol = model.getLineMaxColumn(targetLine);
+        const targetCol = Math.min(Math.max(1, rawCol), maxCol);
+
+        markers.push({
+          startLineNumber: targetLine,
+          startColumn: targetCol,
+          endLineNumber: targetLine,
+          endColumn: maxCol,
+          message,
+          severity: isWarning
+            ? monacoInstanceRef.current.MarkerSeverity.Warning
+            : monacoInstanceRef.current.MarkerSeverity.Error,
+        });
+      }
+    }
+
+    if (markers.length === 0 && errorOutput.trim().length > 0) {
+      const firstLine = errorOutput.split('\n')[0].slice(0, 150);
+      markers.push({
+        startLineNumber: 1,
+        startColumn: 1,
+        endLineNumber: 1,
+        endColumn: model.getLineMaxColumn(1),
+        message: firstLine,
+        severity: monacoInstanceRef.current.MarkerSeverity.Error,
+      });
+    }
+
+    monacoInstanceRef.current.editor.setModelMarkers(model, 'compiler', markers);
+  }, []);
 
   // Test Execution Results
   const [testCasesState, setTestCasesState] = useState<TestCaseItem[]>(activeProblem.visibleTestCases);
@@ -192,16 +258,48 @@ export function InterviewWorkspace({ roomId, interview: propInterview }: Intervi
     },
   ]);
 
-  // Keep AI greeting updated if activeProblem resolves dynamically
+  // Restore AI conversation history from PostgreSQL on mount
   useEffect(() => {
-    setMessages([
-      {
-        role: 'ai',
-        text: `Hello! I am your CodeSync AI Technical Interviewer today. We are going to solve "${activeProblem.title}". Before you begin writing code, please explain your initial algorithmic approach and expected time complexity.`,
-        time: 'Just now',
-      },
-    ]);
-  }, [activeProblem.id]);
+    let isMounted = true;
+    const loadAiHistory = async () => {
+      if (!interview?.token) return;
+      try {
+        const res = await fetch(`/api/interviews/${interview.token}/ai`);
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.success && data.data?.messages && data.data.messages.length > 0) {
+            setMessages(
+              data.data.messages.map((m: any) => ({
+                role: m.role || (m.senderType === 'CANDIDATE' ? 'user' : 'ai'),
+                text: m.text || m.content,
+                time: m.time || 'Restored',
+              }))
+            );
+          }
+        }
+      } catch (_) {}
+    };
+    loadAiHistory();
+    return () => {
+      isMounted = false;
+    };
+  }, [interview?.token]);
+
+  // Keep AI greeting updated if activeProblem resolves dynamically and no conversation started
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length <= 1 && prev[0]?.role === 'ai') {
+        return [
+          {
+            role: 'ai',
+            text: `Hello! I am your CodeSync AI Technical Interviewer today. We are going to solve "${activeProblem.title}". Before you begin writing code, please explain your initial algorithmic approach and expected time complexity.`,
+            time: 'Just now',
+          },
+        ];
+      }
+      return prev;
+    });
+  }, [activeProblem.id, activeProblem.title]);
 
   const [inputText, setInputText] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
@@ -264,16 +362,14 @@ export function InterviewWorkspace({ roomId, interview: propInterview }: Intervi
     }
 
     setSelectedLang(newLang);
-    const newTemplate = getStarterTemplate(activeProblem, newLang);
-    if (editorInstanceRef.current) {
-      editorInstanceRef.current.setValue(newTemplate);
-    }
+    clearCompilerMarkers();
   };
 
   // Switch Question (if HR assigned multiple)
   const handleSwitchProblem = (newIndex: number) => {
     if (newIndex === activeProblemIndex) return;
     setActiveProblemIndex(newIndex);
+    clearCompilerMarkers();
     const newProblem = problems[newIndex];
     const newTemplate = getStarterTemplate(newProblem, selectedLang);
     if (editorInstanceRef.current) {
@@ -420,6 +516,9 @@ export function InterviewWorkspace({ roomId, interview: propInterview }: Intervi
         ? `/api/interviews/${interview.token}/ai`
         : `${API_BASE_URL}/rooms/${roomId}/ai/prompt`;
 
+      // Only attach code when candidate explicitly asks for code review or debugging
+      const isCodeReviewRequest = /\b(?:review|check|rate|critique|look at|grade|debug|trace)\b.*\b(?:code|solution|implementation|codebase)\b/i.test(textToSend);
+
       const res = await fetch(aiEndpoint, {
         method: 'POST',
         headers: {
@@ -427,16 +526,16 @@ export function InterviewWorkspace({ roomId, interview: propInterview }: Intervi
         },
         credentials: 'include',
         body: JSON.stringify({
-          prompt: `As an experienced Technical Interviewer, evaluate candidate's response: "${textToSend}".
-Problem: "${activeProblem.title}" (${activeProblem.difficulty}).
-Constraints: ${activeProblem.constraints.join('; ')}.
-Candidate's current solution code in ${selectedLang}:
-\`\`\`${selectedLang}
-${currentCode}
-\`\`\`
-Provide constructive, concise interviewer evaluation. Question their algorithmic time & space complexity, discuss edge cases, and guide them towards the optimal approach.`,
+          prompt: textToSend,
+          candidateMessage: textToSend,
+          problemTitle: activeProblem.title,
+          problemDifficulty: activeProblem.difficulty,
+          problemDescription: activeProblem.description,
+          language: selectedLang,
+          currentCode: isCodeReviewRequest ? currentCode : undefined,
           action: 'CHAT',
-          code: currentCode,
+          code: isCodeReviewRequest ? currentCode : undefined,
+          history: messages,
         }),
       });
 
@@ -477,6 +576,7 @@ Provide constructive, concise interviewer evaluation. Question their algorithmic
   // Run Code
   const handleRunCode = async () => {
     const rawCode = codeGetter ? codeGetter() : '';
+    clearCompilerMarkers();
     setIsRunningCode(true);
     setActiveBottomTab('results');
     setExecutionStats(null);
@@ -518,10 +618,16 @@ Provide constructive, concise interviewer evaluation. Question their algorithmic
 
         let errorText: string | undefined = undefined;
         if (isTimeout) errorText = 'Execution timed out after 5.0 seconds';
-        else if (isCompileError) errorText = execData.compileError;
-        else if (isRuntimeError) errorText = execData.runtimeError;
+        else if (isCompileError) {
+          errorText = execData.compileError;
+          setCompilerMarkers(execData.compileError);
+        } else if (isRuntimeError) errorText = execData.runtimeError;
         else if (!passed && isCleanExit)
           errorText = `Output mismatch. Expected ${tc.expectedOutput}, got ${execData.stdout.trim()}`;
+
+        if (!isCompileError) {
+          clearCompilerMarkers();
+        }
 
         let statusText = 'Execution Completed';
         if (isTimeout) statusText = 'Execution Timed Out (5.0s Limit)';
@@ -604,6 +710,7 @@ Provide constructive, concise interviewer evaluation. Question their algorithmic
   // Run All Visible Tests
   const handleRunTests = async () => {
     const rawCode = codeGetter ? codeGetter() : '';
+    clearCompilerMarkers();
     setIsRunningTests(true);
     setActiveBottomTab('results');
 
@@ -695,8 +802,20 @@ Provide constructive, concise interviewer evaluation. Question their algorithmic
 
       const allPassed = totalPassed === activeProblem.visibleTestCases.length;
       let statusText = `${totalPassed} / ${activeProblem.visibleTestCases.length} Visible Tests Passed`;
-      if (anyCompileError) statusText = 'Compilation Error';
-      else if (anyTimeout) statusText = 'Execution Timed Out (5.0s Limit)';
+      let compileErrorDetail: string | undefined;
+      if (anyCompileError) {
+        statusText = 'Compilation Error';
+        const failedCompileCase = updatedCases.find(
+          (c) => c.actualOutput && (c.actualOutput.includes('error:') || c.actualOutput.includes('Error:'))
+        );
+        compileErrorDetail = failedCompileCase?.actualOutput;
+        if (compileErrorDetail) {
+          setCompilerMarkers(compileErrorDetail);
+        }
+      } else {
+        clearCompilerMarkers();
+      }
+      if (anyTimeout) statusText = 'Execution Timed Out (5.0s Limit)';
       else if (anyRuntimeError) statusText = 'Runtime Error';
 
       setExecutionStats({
@@ -705,7 +824,7 @@ Provide constructive, concise interviewer evaluation. Question their algorithmic
         exitCode: allPassed ? 0 : 1,
         statusText,
         isSuccess: allPassed,
-        errorText: allPassed ? undefined : statusText,
+        errorText: compileErrorDetail || (allPassed ? undefined : statusText),
       });
     } finally {
       setIsRunningTests(false);
@@ -714,6 +833,7 @@ Provide constructive, concise interviewer evaluation. Question their algorithmic
 
   // Submit Solution (Evaluates visible + confidential hidden tests strictly on the server)
   const handleSubmitSolution = async () => {
+    clearCompilerMarkers();
     setIsSubmitting(true);
     setActiveBottomTab('submission');
 
@@ -849,7 +969,10 @@ Provide constructive, concise interviewer evaluation. Question their algorithmic
     try {
       const savedDraft = localStorage.getItem(codeDraftKey);
       if (savedDraft && savedDraft.trim().length > 0) {
-        starterCodeToLoad = savedDraft;
+        // If cached draft contains legacy hello-world starter code, discard and load real DSA template
+        if (!savedDraft.includes('Hello, CodeSync AI!')) {
+          starterCodeToLoad = savedDraft;
+        }
       }
     } catch (_) {}
   }
@@ -1141,27 +1264,101 @@ Provide constructive, concise interviewer evaluation. Question their algorithmic
 
             {/* Monaco Editor Mount Point with language-specific starter template */}
             <div className="iw-editor-container">
-              <RealtimeEditor
-                key={`${roomId}-${activeProblem.id}-${selectedLang}`}
-                roomId={roomId}
-                language={selectedLang}
-                role="PARTICIPANT"
-                initialContent={starterCodeToLoad}
-                user={{ id: user?.id || 'candidate', name: user?.name || interview?.candidateName || 'Candidate' }}
-                onCodeGetterInit={(getter) => setCodeGetter(() => getter)}
-                onEditorMount={(editor) => {
-                  editorInstanceRef.current = editor;
-                  // Apply starter template or restored draft if editor is empty
-                  if (starterCodeToLoad && (!editor.getValue() || editor.getValue().trim() === '')) {
-                    editor.setValue(starterCodeToLoad);
-                  }
-                  editor.onDidChangeModelContent(() => {
-                    try {
-                      localStorage.setItem(codeDraftKey, editor.getValue());
-                    } catch (_) {}
-                  });
-                }}
-              />
+              {(() => {
+                const activeFilename =
+                  selectedLang === 'python'
+                    ? 'solution.py'
+                    : selectedLang === 'cpp'
+                    ? 'solution.cpp'
+                    : selectedLang === 'java'
+                    ? 'Solution.java'
+                    : selectedLang === 'javascript'
+                    ? 'solution.js'
+                    : 'solution.ts';
+
+                return (
+                  <RealtimeEditor
+                    key={`${roomId}-${activeProblem.id}-${selectedLang}`}
+                    roomId={roomId}
+                    language={selectedLang}
+                    activeFile={activeFilename}
+                    primaryFile={activeFilename}
+                    role="PARTICIPANT"
+                    initialContent={starterCodeToLoad}
+                    user={{ id: user?.id || 'candidate', name: user?.name || interview?.candidateName || 'Candidate' }}
+                    onCodeGetterInit={(getter) => setCodeGetter(() => getter)}
+                    onEditorMount={(editor, monaco) => {
+                      editorInstanceRef.current = editor;
+                      if (monaco) {
+                        monacoInstanceRef.current = monaco;
+                        if (monaco?.languages?.typescript) {
+                          try {
+                            const noDiags = {
+                              noSemanticValidation: true,
+                              noSyntaxValidation: true,
+                              noSuggestionDiagnostics: true,
+                            };
+                            const noDiagnosticsMode = {
+                              diagnostics: false,
+                              completionItems: true,
+                              hovers: true,
+                              documentSymbols: true,
+                              definitions: true,
+                              references: true,
+                              documentHighlights: true,
+                              rename: true,
+                            };
+                            monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions(noDiags);
+                            monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions(noDiags);
+                            monaco.languages.typescript.typescriptDefaults.setModeConfiguration(noDiagnosticsMode);
+                            monaco.languages.typescript.javascriptDefaults.setModeConfiguration(noDiagnosticsMode);
+                          } catch (_) {}
+                        }
+                        if (editor && selectedLang !== 'typescript' && selectedLang !== 'javascript') {
+                          const model = editor.getModel();
+                          if (model) {
+                            try {
+                              const markers = monaco.editor.getModelMarkers({ resource: model.uri });
+                              for (const mk of markers) {
+                                if (mk.owner && mk.owner !== 'compiler') {
+                                  monaco.editor.setModelMarkers(model, mk.owner, []);
+                                }
+                              }
+                              monaco.editor.setModelMarkers(model, 'typescript', []);
+                              monaco.editor.setModelMarkers(model, 'javascript', []);
+                              monaco.editor.setModelMarkers(model, 'typescript-language-features', []);
+                            } catch (_) {}
+                          }
+                        }
+                      }
+                      // Apply starter template or restored draft if editor is empty
+                      if (starterCodeToLoad && (!editor.getValue() || editor.getValue().trim() === '')) {
+                        editor.setValue(starterCodeToLoad);
+                      }
+                      editor.onDidChangeModelContent(() => {
+                        try {
+                          localStorage.setItem(codeDraftKey, editor.getValue());
+                          clearCompilerMarkers();
+                          if (monacoInstanceRef.current && editorInstanceRef.current && selectedLang !== 'typescript' && selectedLang !== 'javascript') {
+                            const m = editorInstanceRef.current.getModel();
+                            if (m) {
+                              const markers = monacoInstanceRef.current.editor.getModelMarkers({ resource: m.uri });
+                              for (const mk of markers) {
+                                if (mk.owner && mk.owner !== 'compiler') {
+                                  monacoInstanceRef.current.editor.setModelMarkers(m, mk.owner, []);
+                                }
+                              }
+                              monacoInstanceRef.current.editor.setModelMarkers(m, 'typescript', []);
+                              monacoInstanceRef.current.editor.setModelMarkers(m, 'javascript', []);
+                              monacoInstanceRef.current.editor.setModelMarkers(m, 'typescript-language-features', []);
+                            }
+                          }
+                        } catch (_) {}
+                      });
+                    }}
+                  />
+                );
+              })()}
             </div>
           </div>
 

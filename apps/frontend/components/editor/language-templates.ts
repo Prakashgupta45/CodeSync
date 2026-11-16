@@ -11,13 +11,13 @@ int main() {
     return 0;
 }
 `,
-  cpp: `#include <iostream>
+  cpp: `#include <bits/stdc++.h>
 using namespace std;
 
-int main() {
-    cout << "Hello, CodeSync AI!" << endl;
-    return 0;
-}
+class Solution {
+public:
+    // Write your solution here
+};
 `,
   java: `public class Main {
     public static void main(String[] args) {
@@ -117,8 +117,8 @@ export function detectLanguageFromCode(code?: string): string | null {
 
   // C++ markers
   if (
-    /#include\s+[<"]iostream[>"]/.test(code) ||
-    /\bstd::(?:cout|cin|endl|vector|string|map)\b/.test(code) ||
+    /#include\s+[<"](?:bits\/stdc\+\+\.h|iostream|vector|string|unordered_map|map|algorithm|queue|stack|set|unordered_set)[>"]/.test(code) ||
+    /\bstd::(?:cout|cin|endl|vector|string|map|unordered_map)\b/.test(code) ||
     /\bcout\s*<</.test(code) ||
     /\busing\s+namespace\s+std\b/.test(code)
   ) {
