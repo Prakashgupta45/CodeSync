@@ -1,4 +1,4 @@
-# 💻 CodeSync AI
+#                                       💻 CodeSync AI
 
 ### AI-Powered Real-Time Pair Programming & Coding Interview Platform
 
